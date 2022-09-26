@@ -44,9 +44,26 @@ simple_cost(nir_alu_src *mul0, nir_alu_src *mul1, nir_alu_src *add)
     return 1;
 }
 
+static void
+print_cb(nir_noltis_tile *tile, FILE *out, const char *prefix, void *data)
+{
+   struct fuse_state *fuse = tile->data;
+
+   if (fuse) {
+      fprintf(out, "%s-> %%%d * %%%d + %%%d", prefix,
+              fuse->src[0].src.ssa->index,
+              fuse->src[1].src.ssa->index,
+              fuse->src[2].src.ssa->index);
+   } else {
+      fprintf(out, "%s: (as is)", prefix);
+   }
+}
+
 bool
 nir_opt_fuse_ffma(nir_shader *shader, int (*ffma_cost)(nir_alu_src *mul0, nir_alu_src *mul1, nir_alu_src *add))
 {
+   static bool debug = false;
+
    if (!ffma_cost)
       ffma_cost = simple_cost;
 
@@ -135,6 +152,9 @@ nir_opt_fuse_ffma(nir_shader *shader, int (*ffma_cost)(nir_alu_src *mul0, nir_al
    }
 
    nir_noltis_select(noltis);
+
+   if (debug)
+      nir_noltis_print_selection(noltis, stderr, print_cb, NULL);
 
    bool progress = false;
 
