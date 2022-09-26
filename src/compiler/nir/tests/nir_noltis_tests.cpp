@@ -39,6 +39,7 @@ namespace
       nir_noltis_tile *add_tile(nir_def *def, uint32_t cost,
                                 nir_def *edge0, nir_def *edge1,
                                 nir_def *interior0, nir_def *interior1);
+      int count_alu_ops(nir_op op);
       void *mem_ctx;
       linear_ctx *lin_ctx;
       nir_noltis *noltis;
@@ -86,6 +87,22 @@ namespace
       tile->cost = cost;
 
       return tile;
+   }
+
+   int nir_noltis_test::count_alu_ops(nir_op op)
+   {
+      int count = 0;
+
+      nir_foreach_block(block, nir_shader_get_entrypoint(b->shader)) {
+         nir_foreach_instr(instr, block) {
+            if (instr->type == nir_instr_type_alu) {
+               if (nir_instr_as_alu(instr)-> op == op)
+                  count++;
+            }
+         }
+      }
+
+      return count;
    }
 
 } // namespace
@@ -149,3 +166,86 @@ TEST_F(nir_noltis_test, paper_example)
    EXPECT_EQ(nir_noltis_get_tile(noltis, y->parent_instr),
              (nir_noltis_tile *)NULL);
 }
+
+TEST_F(nir_noltis_test, fuse_ffma_basic)
+{
+   nir_def *x = nir_imm_int(b, 0);
+   nir_def *y = nir_imm_int(b, 1);
+   nir_def *z = nir_imm_int(b, 2);
+   nir_def *mul = nir_fmul(b, x, y);
+   nir_def *add = nir_fadd(b, mul, z);
+
+   /* unary op to give us a reference to the add result after transformation */
+   nir_def *result_ineg = nir_ineg(b, add);
+
+   ASSERT_TRUE(nir_opt_fuse_ffma(b->shader, NULL));
+   nir_validate_shader(b->shader, "after fuse_ffma");
+
+   nir_alu_instr *ineg_instr = nir_instr_as_alu(result_ineg->parent_instr);
+   nir_alu_instr *fma_instr = nir_instr_as_alu(ineg_instr->src[0].src.ssa->parent_instr);
+   ASSERT_EQ(fma_instr->op, nir_op_ffma);
+}
+
+TEST_F(nir_noltis_test, fuse_ffma_fneg)
+{
+   nir_def *x = nir_imm_int(b, 0);
+   nir_def *y = nir_imm_int(b, 1);
+   nir_def *z = nir_imm_int(b, 2);
+   nir_def *mul = nir_fneg(b, nir_fmul(b, x, y));
+   nir_def *add = nir_fadd(b, mul, z);
+
+   /* unary op to give us a reference to the add result after transformation */
+   nir_def *result_ineg = nir_ineg(b, add);
+
+   ASSERT_TRUE(nir_opt_fuse_ffma(b->shader, NULL));
+   nir_validate_shader(b->shader, "after fuse_ffma");
+
+   nir_alu_instr *ineg_instr = nir_instr_as_alu(result_ineg->parent_instr);
+   nir_alu_instr *fma_instr = nir_instr_as_alu(ineg_instr->src[0].src.ssa->parent_instr);
+   ASSERT_EQ(fma_instr->op, nir_op_ffma);
+   /* Should be a single fneg on one of the 2 mul src args. */
+   ASSERT_EQ(count_alu_ops(nir_op_fneg), 1);
+}
+
+TEST_F(nir_noltis_test, fuse_ffma_matrix)
+{
+   nir_def *x = nir_imm_vec4(b, 0, 1, 2, 3);
+   nir_def *m[4] = {
+      nir_imm_vec4(b, 1, 0, 0, 0),
+      nir_imm_vec4(b, 0, 2, 0, 0),
+      nir_imm_vec4(b, 0, 0, 3, 0),
+      nir_imm_vec4(b, 0, 0, 0, 4),
+   };
+
+   nir_def *last = nir_fmul(b, x, m[0]);
+   for (int i = 1; i < 4; i++)
+      last = nir_fadd(b, last, nir_fmul(b, x, m[i]));
+
+   ASSERT_TRUE(nir_opt_fuse_ffma(b->shader, NULL));
+
+   ASSERT_EQ(count_alu_ops(nir_op_fmul), 1);
+   ASSERT_EQ(count_alu_ops(nir_op_ffma), 3);
+   ASSERT_EQ(count_alu_ops(nir_op_fadd), 0);
+
+   nir_validate_shader(b->shader, "after fuse_ffma");
+}
+
+/* Checks that we select correctly when an edge node is repeated. */
+TEST_F(nir_noltis_test, fuse_ffma_interior_mul)
+{
+   nir_def *x = nir_imm_int(b, 0);
+   nir_def *y = nir_imm_int(b, 1);
+   nir_def *z = nir_imm_int(b, 2);
+   nir_def *xy = nir_fmul(b, x, y);
+   nir_def *xyz = nir_fmul(b, xy, z);
+   nir_fadd(b, xy, xyz);
+
+   ASSERT_TRUE(nir_opt_fuse_ffma(b->shader, NULL));
+   nir_validate_shader(b->shader, "after fuse_ffma");
+
+   ASSERT_EQ(count_alu_ops(nir_op_ffma), 1);
+   ASSERT_EQ(count_alu_ops(nir_op_fmul), 1);
+}
+
+/* XXX: test banned fuse */
+/* XXX: test costs? */

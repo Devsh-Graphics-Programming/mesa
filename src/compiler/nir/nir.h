@@ -5978,6 +5978,7 @@ bool nir_lower_printf_buffer(nir_shader *nir, uint64_t address, uint32_t size);
 bool nir_opt_comparison_pre_impl(nir_function_impl *impl);
 
 bool nir_opt_comparison_pre(nir_shader *shader);
+bool nir_opt_fuse_ffma(nir_shader *shader, int (*ffma_cost)(nir_alu_src *mul0, nir_alu_src *mul1, nir_alu_src *add));
 
 typedef struct nir_opt_access_options {
    bool is_vulkan;
