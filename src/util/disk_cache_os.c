@@ -1131,7 +1131,7 @@ disk_cache_mmap_cache_index(void *mem_ctx, struct disk_cache *cache)
        */
       int ret = posix_fallocate(fd, 0, size);
       if (ret != 0) {
-         if (ret == EOPNOTSUPP) {
+         if (ret == EOPNOTSUPP || ret == EINVAL) {
             if (ftruncate(fd, size) == -1)
                goto path_fail;
          } else {
