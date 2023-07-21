@@ -291,23 +291,19 @@ impl NirShader {
         unsafe { (*self.nir.as_ptr()).info.num_textures }
     }
 
-    pub fn reset_scratch_size(&mut self) {
-        unsafe {
-            (*self.nir.as_ptr()).scratch_size = 0;
-        }
-    }
-
     pub fn scratch_size(&self) -> u32 {
         unsafe { (*self.nir.as_ptr()).scratch_size }
     }
 
-    pub fn reset_shared_size(&mut self) {
-        unsafe {
-            (*self.nir.as_ptr()).info.shared_size = 0;
-        }
-    }
     pub fn shared_size(&self) -> u32 {
         unsafe { (*self.nir.as_ptr()).info.shared_size }
+    }
+
+    pub fn reset_variable_size(&mut self) {
+        let nir = unsafe { self.nir.as_mut() };
+        nir.info.shared_size = 0;
+        nir.global_mem_size = 0;
+        nir.scratch_size = 0;
     }
 
     pub fn workgroup_size(&self) -> [u16; 3] {
@@ -391,6 +387,29 @@ impl NirShader {
                 );
             }
         }
+    }
+
+    pub fn global_mem_size(&self) -> u32 {
+        unsafe { self.nir.as_ref() }.global_mem_size
+    }
+
+    pub fn extract_global_initializers(&mut self) -> Vec<u8> {
+        let nir = unsafe { self.nir.as_mut() };
+        let size = nir.global_mem_size as usize;
+        let mut res = vec![0; size];
+
+        if size > 0 {
+            unsafe {
+                nir_gather_explicit_io_initializers(
+                    nir,
+                    res.as_mut_ptr().cast(),
+                    nir.global_mem_size as usize,
+                    nir_variable_mode::nir_var_mem_global,
+                );
+            }
+        }
+
+        res
     }
 
     pub fn has_constant(&self) -> bool {

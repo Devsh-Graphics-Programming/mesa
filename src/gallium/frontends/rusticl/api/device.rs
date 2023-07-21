@@ -175,7 +175,13 @@ unsafe impl CLInfo<cl_device_info> for cl_device_id {
             // TODO atm implemented as mem_const
             CL_DEVICE_MAX_CONSTANT_ARGS => v.write::<cl_uint>(dev.const_max_count()),
             CL_DEVICE_MAX_CONSTANT_BUFFER_SIZE => v.write::<cl_ulong>(dev.const_max_size()),
-            CL_DEVICE_MAX_GLOBAL_VARIABLE_SIZE => v.write::<usize>(0),
+            CL_DEVICE_MAX_GLOBAL_VARIABLE_SIZE => {
+                v.write::<usize>(if Platform::features().prog_var {
+                    64 << 10
+                } else {
+                    0
+                })
+            }
             CL_DEVICE_MAX_MEM_ALLOC_SIZE => v.write::<cl_ulong>(dev.max_mem_alloc()),
             CL_DEVICE_MAX_NUM_SUB_GROUPS => v.write::<cl_uint>(if dev.subgroups_supported() {
                 dev.max_subgroups()

@@ -69,6 +69,7 @@ pub struct PlatformDebug {
 pub struct PlatformFeatures {
     pub fp64: bool,
     pub intel: bool,
+    pub prog_var: bool,
 }
 
 static PLATFORM_ENV_ONCE: Once = Once::new();
@@ -97,6 +98,7 @@ static mut PLATFORM_DBG: PlatformDebug = PlatformDebug {
 static mut PLATFORM_FEATURES: PlatformFeatures = PlatformFeatures {
     fp64: false,
     intel: false,
+    prog_var: false,
 };
 
 fn load_env() {
@@ -134,6 +136,7 @@ fn load_env() {
             match flag {
                 "fp64" => features.fp64 = true,
                 "intel" => features.intel = true,
+                "progvar" => features.prog_var = true,
                 "" => (),
                 _ => eprintln!("Unknown RUSTICL_FEATURES flag found: {}", flag),
             }

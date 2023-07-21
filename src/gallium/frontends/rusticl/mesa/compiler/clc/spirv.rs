@@ -360,6 +360,12 @@ impl SPIRVBin {
         let spirv_options =
             Self::get_spirv_options(false, libclc.get_nir(), address_bits, &spirv_caps, log);
 
+        let c_entry_ptr = if entry_point.is_empty() {
+            ptr::null()
+        } else {
+            c_entry.as_ptr()
+        };
+
         let nir = unsafe {
             spirv_to_nir(
                 self.spirv.data.cast(),
@@ -367,12 +373,32 @@ impl SPIRVBin {
                 spec_constants.as_mut_ptr(),
                 spec_constants.len() as u32,
                 gl_shader_stage::MESA_SHADER_KERNEL,
-                c_entry.as_ptr(),
+                c_entry_ptr,
                 &spirv_options,
                 nir_options,
             )
         };
 
+        NirShader::new(nir)
+    }
+
+    pub fn to_prog_var_init(
+        &self,
+        nir_options: *const nir_shader_compiler_options,
+        address_bits: u32,
+        log: Option<&mut Vec<String>>,
+    ) -> Option<NirShader> {
+        let spirv_caps = Self::get_spirv_capabilities();
+        let spirv_options =
+            Self::get_spirv_options(false, ptr::null(), address_bits, &spirv_caps, log);
+        let nir = unsafe {
+            spirv_create_prog_var_init_shader(
+                self.spirv.data.cast(),
+                self.spirv.size / 4,
+                &spirv_options,
+                nir_options,
+            )
+        };
         NirShader::new(nir)
     }
 

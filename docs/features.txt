@@ -772,6 +772,7 @@ Rusticl OpenCL 2.0 -- all DONE:
   OpenCL C 2.0                                          in progress
   - Work-group Collective Functions                     not started
   - Generic address space                               in progress
+  - Program scope variables                             in progress
 
 
 Rusticl OpenCL 2.1 -- all DONE:

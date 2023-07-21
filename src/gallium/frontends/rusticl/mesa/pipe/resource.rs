@@ -278,6 +278,19 @@ impl PipeResource {
     }
 }
 
+impl Clone for PipeResource {
+    fn clone(&self) -> Self {
+        let mut ptr = ptr::null_mut();
+        unsafe {
+            pipe_resource_reference(&mut ptr, self.pipe.as_ptr());
+        }
+
+        Self {
+            pipe: NonNull::new(ptr).unwrap(),
+        }
+    }
+}
+
 impl Drop for PipeResource {
     fn drop(&mut self) {
         unsafe {

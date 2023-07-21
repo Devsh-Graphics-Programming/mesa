@@ -142,6 +142,10 @@ pub struct HelperContext<'a> {
 }
 
 impl HelperContext<'_> {
+    pub unsafe fn bind_compute_state(&self, state: *mut c_void) {
+        unsafe { self.lock.bind_compute_state(state) }
+    }
+
     pub fn buffer_subdata(
         &self,
         res: &PipeResource,
@@ -150,6 +154,18 @@ impl HelperContext<'_> {
         size: c_uint,
     ) {
         self.lock.buffer_subdata(res, offset, data, size)
+    }
+
+    pub fn launch_grid(&self) {
+        self.lock.launch_grid(1, [1; 3], [1; 3], 0, &[])
+    }
+
+    pub fn set_constant_buffer(&self, idx: u32, data: &[u8]) {
+        self.lock.set_constant_buffer(idx, data);
+    }
+
+    pub fn set_global_binding(&self, res: &[&PipeResource], out: &mut [*mut u32]) {
+        self.lock.set_global_binding(res, out)
     }
 
     pub fn texture_subdata(
@@ -690,6 +706,10 @@ impl Device {
         if self.fp64_supported() {
             add_ext(1, 0, 0, "cl_khr_fp64");
             add_feat(1, 0, 0, "__opencl_c_fp64");
+        }
+
+        if Platform::features().prog_var {
+            add_feat(1, 0, 0, "__opencl_c_program_scope_global_variables");
         }
 
         if self.is_gl_sharing_supported() {
@@ -1249,6 +1269,7 @@ impl Device {
             integer_dot_product: true,
             intel_subgroups: self.intel_subgroups_supported(),
             kernel_clock: self.kernel_clock_supported(),
+            prog_vars: Platform::features().prog_var,
             subgroups: subgroups_supported,
             subgroups_shuffle: subgroups_supported,
             subgroups_shuffle_relative: subgroups_supported,

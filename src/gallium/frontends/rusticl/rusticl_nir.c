@@ -79,6 +79,8 @@ rusticl_lower_intrinsics_instr(
         assert(nir_find_variable_with_location(b->shader, nir_var_uniform, state->work_dim_loc));
         return nir_u2uN(b, nir_load_var(b, nir_find_variable_with_location(b->shader, nir_var_uniform, state->work_dim_loc)),
                         intrins->def.bit_size);
+    case nir_intrinsic_load_global_base_ptr:
+        return nir_load_var(b, nir_find_variable_with_location(b->shader, nir_var_uniform, state->prog_var_loc));
     default:
         return NULL;
     }
