@@ -169,7 +169,7 @@ vtn_copy_value(struct vtn_builder *b, uint32_t src_value_id,
       dst->pointer = vtn_decorate_pointer(b, dst, dst->pointer);
 }
 
-static struct vtn_access_chain *
+struct vtn_access_chain *
 vtn_access_chain_create(struct vtn_builder *b, unsigned length)
 {
    struct vtn_access_chain *chain;
@@ -334,7 +334,7 @@ vtn_create_internal_pointer_type(struct vtn_builder *b,
    return t;
 }
 
-static struct vtn_pointer *
+struct vtn_pointer *
 vtn_pointer_dereference(struct vtn_builder *b,
                         struct vtn_pointer *base,
                         struct vtn_access_chain *deref_chain)
@@ -2327,6 +2327,7 @@ vtn_create_variable(struct vtn_builder *b, struct vtn_value *val,
     * undef.
     */
    if (initializer && !initializer->is_undef_constant) {
+      bool ignore = false;
       switch (storage_class) {
       case SpvStorageClassWorkgroup:
          /* VK_KHR_zero_initialize_workgroup_memory. */
@@ -2368,9 +2369,9 @@ vtn_create_variable(struct vtn_builder *b, struct vtn_value *val,
 
       case SpvStorageClassCrossWorkgroup:
          vtn_assert(b->options->environment == NIR_SPIRV_OPENCL);
-         vtn_fail("Initializer for CrossWorkgroup variable %u "
-                  "not yet supported in Mesa.",
-                  vtn_id_for_value(b, val));
+         /* Ignore initializers if an entry point was given so nothing assumes their content */
+         if (b->entry_point_name)
+            ignore = true;
          break;
 
       default: {
@@ -2395,17 +2396,19 @@ vtn_create_variable(struct vtn_builder *b, struct vtn_value *val,
          }
       }
 
-      switch (initializer->value_type) {
-      case vtn_value_type_constant:
-         var->var->constant_initializer =
-            nir_constant_clone(initializer->constant, var->var);
-         break;
-      case vtn_value_type_pointer:
-         var->var->pointer_initializer = initializer->pointer->var->var;
-         break;
-      default:
-         vtn_fail("SPIR-V variable initializer %u must be constant or pointer",
-                  vtn_id_for_value(b, initializer));
+      if (!ignore) {
+         switch (initializer->value_type) {
+         case vtn_value_type_constant:
+            var->var->constant_initializer =
+               nir_constant_clone(initializer->constant, var->var);
+            break;
+         case vtn_value_type_pointer:
+            var->var->pointer_initializer = initializer->pointer->var->var;
+            break;
+         default:
+            vtn_fail("SPIR-V variable initializer %u must be constant or pointer",
+                     vtn_id_for_value(b, initializer));
+         }
       }
    }
 
@@ -2671,7 +2674,7 @@ vtn_handle_variables(struct vtn_builder *b, SpvOp opcode,
        * SPIR-V 1.4 the interface is only used for I/O variables, so extra
        * variables will still need to be removed later.
        */
-      if (!b->options->create_library &&
+      if (b->entry_point_name && !b->options->create_library &&
           (is_io || (b->version >= 0x10400 && is_global))) {
          if (!bsearch(&w[2], b->interface_ids, b->interface_ids_count, 4, cmp_uint32_t))
             break;
@@ -2680,7 +2683,24 @@ vtn_handle_variables(struct vtn_builder *b, SpvOp opcode,
       struct vtn_value *val = vtn_push_value(b, w[2], vtn_value_type_pointer);
       struct vtn_value *initializer = count > 4 ? vtn_untyped_value(b, w[4]) : NULL;
 
-      vtn_create_variable(b, val, ptr_type, data_type, storage_class, initializer);
+      /* Non constant initializer for CrossWorkgroup variables need to be spilled to an
+       * initialization shader.
+       */
+      struct vtn_value *constant_initializer = initializer;
+      if (initializer && initializer->value_type != vtn_value_type_constant &&
+          storage_class == SpvStorageClassCrossWorkgroup) {
+         constant_initializer = NULL;
+      }
+
+      vtn_create_variable(b, val, ptr_type, data_type, storage_class, constant_initializer);
+
+      /* Now emit the lowered initializer */
+      if (b->nb.shader && initializer && initializer->value_type != vtn_value_type_constant &&
+          storage_class == SpvStorageClassCrossWorkgroup) {
+
+         nir_deref_instr *var = nir_build_deref_var(&b->nb, val->pointer->var->var);
+         nir_store_deref(&b->nb, var, &initializer->pointer->deref->def, 0xffff);
+      }
 
       break;
    }

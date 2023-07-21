@@ -1092,4 +1092,7 @@ nir_deref_instr *vtn_create_cmat_temporary(struct vtn_builder *b,
 
 gl_shader_stage vtn_stage_for_execution_model(SpvExecutionModel model);
 
+struct vtn_access_chain *vtn_access_chain_create(struct vtn_builder *b, unsigned length);
+struct vtn_pointer *vtn_pointer_dereference(struct vtn_builder *b, struct vtn_pointer *base, struct vtn_access_chain *deref_chain);
+
 #endif /* _VTN_PRIVATE_H_ */

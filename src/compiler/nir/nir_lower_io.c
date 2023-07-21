@@ -2791,7 +2791,7 @@ static void
 write_constant(void *dst, size_t dst_size,
                const nir_constant *c, const struct glsl_type *type)
 {
-   if (c->is_null_constant) {
+   if (!c || c->is_null_constant) {
       memset(dst, 0, dst_size);
       return;
    }

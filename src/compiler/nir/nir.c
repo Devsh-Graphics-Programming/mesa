@@ -2372,6 +2372,8 @@ nir_intrinsic_from_system_value(gl_system_value val)
       return nir_intrinsic_load_work_dim;
    case SYSTEM_VALUE_USER_DATA_AMD:
       return nir_intrinsic_load_user_data_amd;
+   case SYSTEM_VALUE_GLOBAL_BASE_PTR:
+      return nir_intrinsic_load_global_base_ptr;
    case SYSTEM_VALUE_RAY_LAUNCH_ID:
       return nir_intrinsic_load_ray_launch_id;
    case SYSTEM_VALUE_RAY_LAUNCH_SIZE:
@@ -2542,6 +2544,8 @@ nir_system_value_from_intrinsic(nir_intrinsic_op intrin)
       return SYSTEM_VALUE_WORK_DIM;
    case nir_intrinsic_load_user_data_amd:
       return SYSTEM_VALUE_USER_DATA_AMD;
+   case nir_intrinsic_load_global_base_ptr:
+      return SYSTEM_VALUE_GLOBAL_BASE_PTR;
    case nir_intrinsic_load_barycentric_model:
       return SYSTEM_VALUE_BARYCENTRIC_PULL_MODEL;
    case nir_intrinsic_load_gs_header_ir3:

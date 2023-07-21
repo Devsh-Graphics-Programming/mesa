@@ -829,6 +829,13 @@ typedef enum
    SYSTEM_VALUE_USER_DATA_AMD,
    /*@}*/
 
+   /**
+    * \name OpenCL specific Compute shader system values
+    */
+   /*@{*/
+   SYSTEM_VALUE_GLOBAL_BASE_PTR,
+   /*@}*/
+
    /** Required for VK_KHR_device_group */
    SYSTEM_VALUE_DEVICE_INDEX,
 

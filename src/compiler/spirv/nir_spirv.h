@@ -173,6 +173,11 @@ nir_shader *spirv_to_nir(const uint32_t *words, size_t word_count,
                          const struct spirv_to_nir_options *options,
                          const nir_shader_compiler_options *nir_options);
 
+nir_shader *
+spirv_create_prog_var_init_shader(const uint32_t *words, size_t word_count,
+                                  const struct spirv_to_nir_options *options,
+                                  const nir_shader_compiler_options *nir_options);
+
 void spirv_print_asm(FILE *fp, const uint32_t *words, size_t word_count);
 
 #ifdef __cplusplus
