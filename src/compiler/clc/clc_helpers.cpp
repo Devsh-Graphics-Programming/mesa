@@ -1006,6 +1006,10 @@ clc_compile_to_llvm_module(LLVMContext &llvm_ctx,
       c->getPreprocessorOpts().addMacroDef("__opencl_c_kernel_clock_scope_device=1");
       c->getPreprocessorOpts().addMacroDef("__opencl_c_kernel_clock_scope_sub_group=1");
    }
+   if (args->features.prog_vars) {
+      c->getTargetOpts().OpenCLExtensionsAsWritten.push_back(
+         "+__opencl_c_program_scope_global_variables");
+   }
    if (args->features.subgroups) {
       c->getTargetOpts().OpenCLExtensionsAsWritten.push_back("+__opencl_c_subgroups");
       if (args->features.subgroups_shuffle) {
