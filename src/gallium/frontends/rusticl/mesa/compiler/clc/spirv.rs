@@ -87,6 +87,22 @@ fn create_clc_logger(msgs: &mut Vec<String>) -> clc_logger {
     }
 }
 
+#[derive(Clone, Copy)]
+pub enum SPIRVAddressMode {
+    Bits32,
+    Bits64,
+    Bits64Generic,
+}
+
+impl SPIRVAddressMode {
+    pub fn bits(&self) -> u32 {
+        match self {
+            Self::Bits32 => 32,
+            Self::Bits64 | Self::Bits64Generic => 64,
+        }
+    }
+}
+
 impl SPIRVBin {
     pub fn from_clc(
         source: &CString,
@@ -95,7 +111,7 @@ impl SPIRVBin {
         cache: &Option<DiskCache>,
         features: clc_optional_features,
         spirv_extensions: &[&CStr],
-        address_bits: u32,
+        address_mode: SPIRVAddressMode,
     ) -> (Option<Self>, String) {
         let mut hash_key = None;
         let has_includes = args.iter().any(|a| a.as_bytes()[0..2] == *b"-I");
@@ -152,7 +168,7 @@ impl SPIRVBin {
             use_llvm_spirv_target: false,
             allowed_spirv_extensions: spirv_extensions.as_ptr(),
             c_compatible: false,
-            address_bits: address_bits,
+            address_bits: address_mode.bits(),
         };
         let mut msgs: Vec<String> = Vec::new();
         let logger = create_clc_logger(&mut msgs);
@@ -307,19 +323,26 @@ impl SPIRVBin {
     fn get_spirv_options(
         library: bool,
         clc_shader: *const nir_shader,
-        address_bits: u32,
+        address_mode: SPIRVAddressMode,
         caps: &spirv_capabilities,
         log: Option<&mut Vec<String>>,
     ) -> spirv_to_nir_options {
         let global_addr_format;
         let offset_addr_format;
 
-        if address_bits == 32 {
-            global_addr_format = nir_address_format::nir_address_format_32bit_global;
-            offset_addr_format = nir_address_format::nir_address_format_32bit_offset;
-        } else {
-            global_addr_format = nir_address_format::nir_address_format_64bit_global;
-            offset_addr_format = nir_address_format::nir_address_format_32bit_offset_as_64bit;
+        match address_mode {
+            SPIRVAddressMode::Bits32 => {
+                global_addr_format = nir_address_format::nir_address_format_32bit_global;
+                offset_addr_format = nir_address_format::nir_address_format_32bit_offset;
+            }
+            SPIRVAddressMode::Bits64 => {
+                global_addr_format = nir_address_format::nir_address_format_64bit_global;
+                offset_addr_format = nir_address_format::nir_address_format_32bit_offset_as_64bit;
+            }
+            SPIRVAddressMode::Bits64Generic => {
+                global_addr_format = nir_address_format::nir_address_format_62bit_generic;
+                offset_addr_format = nir_address_format::nir_address_format_62bit_generic;
+            }
         }
 
         let debug = log.map(|log| spirv_to_nir_options__bindgen_ty_1 {
@@ -352,13 +375,13 @@ impl SPIRVBin {
         nir_options: *const nir_shader_compiler_options,
         libclc: &NirShader,
         spec_constants: &mut [nir_spirv_specialization],
-        address_bits: u32,
+        address_mode: SPIRVAddressMode,
         log: Option<&mut Vec<String>>,
     ) -> Option<NirShader> {
         let c_entry = CString::new(entry_point.as_bytes()).unwrap();
         let spirv_caps = Self::get_spirv_capabilities();
         let spirv_options =
-            Self::get_spirv_options(false, libclc.get_nir(), address_bits, &spirv_caps, log);
+            Self::get_spirv_options(false, libclc.get_nir(), address_mode, &spirv_caps, log);
 
         let c_entry_ptr = if entry_point.is_empty() {
             ptr::null()
@@ -385,12 +408,12 @@ impl SPIRVBin {
     pub fn to_prog_var_init(
         &self,
         nir_options: *const nir_shader_compiler_options,
-        address_bits: u32,
+        address_mode: SPIRVAddressMode,
         log: Option<&mut Vec<String>>,
     ) -> Option<NirShader> {
         let spirv_caps = Self::get_spirv_capabilities();
         let spirv_options =
-            Self::get_spirv_options(false, ptr::null(), address_bits, &spirv_caps, log);
+            Self::get_spirv_options(false, ptr::null(), address_mode, &spirv_caps, log);
         let nir = unsafe {
             spirv_create_prog_var_init_shader(
                 self.spirv.data.cast(),
@@ -405,9 +428,14 @@ impl SPIRVBin {
     pub fn get_lib_clc(screen: &PipeScreen) -> Option<NirShader> {
         let nir_options = screen.nir_shader_compiler_options(pipe_shader_type::PIPE_SHADER_COMPUTE);
         let address_bits = screen.compute_caps().address_bits;
+        let address_mode = if address_bits == 64 {
+            SPIRVAddressMode::Bits64
+        } else {
+            SPIRVAddressMode::Bits32
+        };
         let spirv_caps = Self::get_spirv_capabilities();
         let spirv_options =
-            Self::get_spirv_options(false, ptr::null(), address_bits, &spirv_caps, None);
+            Self::get_spirv_options(false, ptr::null(), address_mode, &spirv_caps, None);
         let shader_cache = DiskCacheBorrowed::as_ptr(&screen.shader_cache());
 
         NirShader::new(unsafe {

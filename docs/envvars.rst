@@ -1193,6 +1193,7 @@ Rusticl environment variables
    as they might not be stable enough or break OpenCL conformance.
 
    - ``fp64`` enables OpenCL double support
+   - ``generic`` enables generic address space support
    - ``intel`` enables various Intel OpenCL extensions
 
 .. envvar:: RUSTICL_DEBUG

@@ -6,6 +6,7 @@ use crate::core::util::*;
 use crate::core::version::*;
 use crate::impl_cl_type_trait_base;
 
+use mesa_rust::compiler::clc::spirv::SPIRVAddressMode;
 use mesa_rust::compiler::clc::*;
 use mesa_rust::compiler::nir::*;
 use mesa_rust::pipe::context::*;
@@ -689,6 +690,10 @@ impl Device {
             "__opencl_c_integer_dot_product_input_4x8bit_packed",
         );
 
+        if Platform::features().generic {
+            add_feat(1, 0, 0, "__opencl_c_generic_address_space");
+        }
+
         add_spirv(c"SPV_KHR_expect_assume");
         add_spirv(c"SPV_KHR_float_controls");
         add_spirv(c"SPV_KHR_integer_dot_product");
@@ -834,6 +839,18 @@ impl Device {
 
     pub fn address_bits(&self) -> cl_uint {
         self.screen.compute_caps().address_bits
+    }
+
+    pub fn address_mode(&self, generic: bool) -> SPIRVAddressMode {
+        if self.address_bits() == 64 {
+            if generic && self.generic_address_space() {
+                SPIRVAddressMode::Bits64Generic
+            } else {
+                SPIRVAddressMode::Bits64
+            }
+        } else {
+            SPIRVAddressMode::Bits32
+        }
     }
 
     pub fn const_max_size(&self) -> cl_ulong {
@@ -1250,6 +1267,10 @@ impl Device {
         self.screen.caps().nir_samplers_as_deref
     }
 
+    pub fn generic_address_space(&self) -> bool {
+        self.address_bits() == 64 && Platform::features().generic
+    }
+
     pub fn helper_ctx(&self) -> impl HelperContextWrapper + '_ {
         HelperContext {
             lock: self.helper_ctx.lock().unwrap(),
@@ -1261,6 +1282,7 @@ impl Device {
         clc_optional_features {
             fp16: self.fp16_supported(),
             fp64: self.fp64_supported(),
+            generic_address_space: self.generic_address_space(),
             int64: self.int64_supported(),
             images: self.caps.has_images,
             images_depth: self.caps.has_depth_images,

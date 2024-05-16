@@ -157,7 +157,9 @@ impl ProgramBuild {
             dev.helper_ctx().delete_compute_state(cso);
 
             let helper_ctx = dev.helper_ctx();
-            let tx = helper_ctx.buffer_map(&prog_var, 0, len as i32, RWFlags::RD).unwrap();
+            let tx = helper_ctx
+                .buffer_map(&prog_var, 0, len as i32, RWFlags::RD)
+                .unwrap();
             let data = unsafe { slice::from_raw_parts(tx.ptr().cast::<u8>(), len as usize) };
             println!("prog_var after init: {data:x?}");
 
@@ -275,7 +277,7 @@ impl ProgramBuild {
                 .nir_shader_compiler_options(pipe_shader_type::PIPE_SHADER_COMPUTE),
             &d.lib_clc,
             &mut spec_constants,
-            d.address_bits(),
+            d.address_mode(true),
             log.as_mut(),
         );
 
@@ -719,7 +721,7 @@ impl Program {
                     get_disk_cache(),
                     dev.cl_features(),
                     &dev.spirv_extensions,
-                    dev.address_bits(),
+                    dev.address_mode(true),
                 );
 
                 if Platform::dbg().validate_spirv {

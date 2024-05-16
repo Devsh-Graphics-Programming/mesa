@@ -68,6 +68,7 @@ pub struct PlatformDebug {
 
 pub struct PlatformFeatures {
     pub fp64: bool,
+    pub generic: bool,
     pub intel: bool,
     pub prog_var: bool,
 }
@@ -97,6 +98,7 @@ static mut PLATFORM_DBG: PlatformDebug = PlatformDebug {
 };
 static mut PLATFORM_FEATURES: PlatformFeatures = PlatformFeatures {
     fp64: false,
+    generic: false,
     intel: false,
     prog_var: false,
 };
@@ -135,6 +137,7 @@ fn load_env() {
         for flag in feature_flags.split(',') {
             match flag {
                 "fp64" => features.fp64 = true,
+                "generic" => features.generic = true,
                 "intel" => features.intel = true,
                 "progvar" => features.prog_var = true,
                 "" => (),
