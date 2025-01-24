@@ -5990,10 +5990,48 @@ vtn_handle_ptr(struct vtn_builder *b, SpvOp opcode,
 
    case SpvOpPtrEqual:
    case SpvOpPtrNotEqual: {
-      def = nir_build_addr_ieq(&b->nb,
-                               vtn_get_nir_ssa(b, w[3]),
-                               vtn_get_nir_ssa(b, w[4]),
-                               addr_format);
+      nir_def *src0 = vtn_get_nir_ssa(b, w[3]);
+      nir_def *src1 = vtn_get_nir_ssa(b, w[4]);
+
+      /* There is an annoying bug in the SPIRV-LLVM-Translator where when you
+       * have code like this:
+       *
+       *   int *ptr = NULL;
+       *   local int *lptr = NULL;
+       *   global int *gptr = NULL;
+       *   ptr = lptr;
+       *   bool res = lptr == ptr;
+       *
+       * It turns it into a comparison in the shared (CL local) address space,
+       * which nir_opt_deref doesn't like. In the SPIR-V we'll see the second
+       * argument cast from generic to shared, even though we'll need the first
+       * argument casted to generic.
+       */
+      if (src0->parent_instr->type == nir_instr_type_deref &&
+          src1->parent_instr->type == nir_instr_type_deref) {
+         nir_deref_instr *src0_deref = nir_instr_as_deref(src0->parent_instr);
+         nir_deref_instr *src1_deref = nir_instr_as_deref(src1->parent_instr);
+
+         if (src0_deref->modes != nir_var_mem_generic) {
+            if (src1_deref->deref_type == nir_deref_type_cast) {
+               /* We might see a move in between */
+               nir_instr *bparent =
+                  nir_scalar_resolved(src1_deref->parent.ssa, 0).def->parent_instr;
+               if (bparent->type == nir_instr_type_deref)
+                  src1_deref = nir_instr_as_deref(bparent);
+            }
+
+            if (src1_deref->modes == nir_var_mem_generic) {
+               src0_deref =
+                  nir_build_deref_cast(&b->nb, &src0_deref->def,
+                                       nir_var_mem_generic, src0_deref->type, 0);
+               src0 = &src0_deref->def;
+               src1 = &src1_deref->def;
+            }
+         }
+      }
+
+      def = nir_build_addr_ieq(&b->nb, src0, src1, addr_format);
       if (opcode == SpvOpPtrNotEqual)
          def = nir_inot(&b->nb, def);
       break;
