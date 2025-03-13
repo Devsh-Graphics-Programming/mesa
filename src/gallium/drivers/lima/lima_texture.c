@@ -179,7 +179,25 @@ lima_update_tex_desc(struct lima_context *ctx, struct lima_sampler_state *sample
       desc.max_lod = max_lod;
       desc.lod_bias = sampler->base.lod_bias;
 
-      switch (sampler->base.min_mip_filter) {
+      unsigned min_mip_filter = sampler->base.min_mip_filter;
+      struct lima_resource *lima_res = lima_resource(texture->base.texture);
+      /* Due to hardware limitations, it's not possible to implement mipmapping
+       * for linear textures without smart tricks or significantly increasing
+       * memory usage.
+       *
+       * RT dimensions have to be a multiply of 16 (tile size) in order for the
+       * textures to be renderable, thus for linear textures we have to specify
+       * stride. The issue is that texture descriptor allows to specify stride
+       * only for all levels at once.
+       *
+       * Until we have a better solution, just disable mipmapping for
+       * linear textures. It prevents rendering artefacts and PP MMU faults due
+       * to out of bounds reads for higher levels.
+       */
+      if (!lima_res->tiled)
+         min_mip_filter = PIPE_TEX_MIPFILTER_NONE;
+
+      switch (min_mip_filter) {
          case PIPE_TEX_MIPFILTER_LINEAR:
             desc.mipfilter = LIMA_MIPFILTER_LINEAR;
             break;
