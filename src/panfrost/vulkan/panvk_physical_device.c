@@ -201,6 +201,9 @@ get_device_extensions(const struct panvk_physical_device *device,
       .KHR_global_priority = true,
       .KHR_image_format_list = true,
       .KHR_imageless_framebuffer = true,
+#ifdef PANVK_USE_WSI_PLATFORM
+      .KHR_incremental_present = true,
+#endif
       .KHR_index_type_uint8 = true,
       .KHR_line_rasterization = true,
       .KHR_maintenance1 = true,
