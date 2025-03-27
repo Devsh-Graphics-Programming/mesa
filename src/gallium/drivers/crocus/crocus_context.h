@@ -575,6 +575,8 @@ struct crocus_context {
       PIPE_FB_SURFACES; //STOP USING THIS
       struct pipe_framebuffer_state framebuffer;
       struct pipe_clip_state clip_planes;
+      /* width and height treated like x2 and y2 */
+      struct pipe_box render_area;
 
       float default_outer_level[4];
       float default_inner_level[2];

@@ -3390,6 +3390,8 @@ crocus_set_framebuffer_state(struct pipe_context *ctx,
    struct crocus_resource *zres;
    struct crocus_resource *stencil_res;
 #endif
+   struct crocus_resource *new_res = NULL;
+   struct pipe_box new_render_area;
 
    unsigned samples = util_framebuffer_get_num_samples(state);
    unsigned layers = util_framebuffer_get_num_layers(state);
@@ -3413,13 +3415,26 @@ crocus_set_framebuffer_state(struct pipe_context *ctx,
       ice->state.dirty |= CROCUS_DIRTY_CLIP;
    }
 
-   if (cso->width != state->width || cso->height != state->height) {
+   if (state->nr_cbufs > 0)
+      new_res = (struct crocus_resource *)state->cbufs[0].texture;
+
+   if (new_res && new_res->use_damage) {
+      new_render_area = new_res->damage;
+   } else {
+      new_render_area.x = 0;
+      new_render_area.y = 0;
+      new_render_area.width = state->width;
+      new_render_area.height = state->height;
+   }
+
+   if (memcmp(&ice->state.render_area, &new_render_area, sizeof(new_render_area))) {
       ice->state.dirty |= CROCUS_DIRTY_SF_CL_VIEWPORT;
       ice->state.dirty |= CROCUS_DIRTY_RASTER;
       ice->state.dirty |= CROCUS_DIRTY_DRAWING_RECTANGLE;
 #if GFX_VER >= 6
       ice->state.dirty |= CROCUS_DIRTY_GEN6_SCISSOR_RECT;
 #endif
+      ice->state.render_area = new_render_area;
    }
 
    if (cso->zsbuf.texture || state->zsbuf.texture) {
@@ -5929,6 +5944,8 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
 
    if (dirty & CROCUS_DIRTY_SF_CL_VIEWPORT) {
       struct pipe_framebuffer_state *cso_fb = &ice->state.framebuffer;
+      int32_t x_min, y_min, x_max, y_max;
+
 #if GFX_VER >= 7
       uint32_t sf_cl_vp_address;
       uint32_t *vp_map =
@@ -5946,6 +5963,11 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
                       32, &ice->state.clip_vp_address);
 #endif
 
+      x_min = ice->state.render_area.x;
+      y_min = ice->state.render_area.y;
+      x_max = ice->state.render_area.width;
+      y_max = ice->state.render_area.height;
+
       for (unsigned i = 0; i < ice->state.num_viewports; i++) {
          const struct pipe_viewport_state *state = &ice->state.viewports[i];
          float gb_xmin, gb_xmax, gb_ymin, gb_ymax;
@@ -5956,7 +5978,7 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
          float vp_ymin = viewport_extent(state, 1, -1.0f);
          float vp_ymax = viewport_extent(state, 1,  1.0f);
 #endif
-         intel_calculate_guardband_size(0, cso_fb->width, 0, cso_fb->height,
+         intel_calculate_guardband_size(x_min, x_max, y_min, y_max,
                                         state->scale[0], state->scale[1],
                                         state->translate[0], state->translate[1],
                                         &gb_xmin, &gb_xmax, &gb_ymin, &gb_ymax);

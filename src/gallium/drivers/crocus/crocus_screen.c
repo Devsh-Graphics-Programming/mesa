@@ -554,6 +554,38 @@ crocus_screen_get_fd(struct pipe_screen *pscreen)
    return screen->winsys_fd;
 }
 
+static void
+crocus_set_damage_region(struct pipe_screen *pscreen, struct pipe_resource *pres,
+                       unsigned int nrects, const struct pipe_box *rects)
+{
+   struct crocus_resource *res = (struct crocus_resource *)pres;
+
+   if (nrects == 0) {
+      res->use_damage = false;
+      return;
+   }
+
+   struct pipe_box damage = rects[0];
+   for (unsigned i = 1; i < nrects; i++)
+      u_box_union_2d(&damage, &damage, &rects[i]);
+
+   /* The damage we get from EGL uses a lower-left origin but the hardware
+    * uses upper-left so we need to flip it.
+    */
+   damage.y = res->base.b.height0 - (damage.y + damage.height);
+
+   /* Intersect with the area of the resource */
+   struct pipe_box res_area;
+   u_box_origin_2d(res->base.b.width0, res->base.b.height0, &res_area);
+   u_box_intersect_2d(&damage, &damage, &res_area);
+
+   res->damage = damage;
+   res->use_damage = damage.x != 0 ||
+                     damage.y != 0 ||
+                     damage.width != res->base.b.width0 ||
+                     damage.height != res->base.b.height0;
+}
+
 struct pipe_screen *
 crocus_screen_create(int fd, const struct pipe_screen_config *config)
 {
@@ -652,6 +684,7 @@ crocus_screen_create(int fd, const struct pipe_screen_config *config)
    pscreen->query_memory_info = crocus_query_memory_info;
    pscreen->get_driver_query_group_info = crocus_get_monitor_group_info;
    pscreen->get_driver_query_info = crocus_get_monitor_info;
+   pscreen->set_damage_region = crocus_set_damage_region;
 
    crocus_init_shader_caps(screen);
    crocus_init_compute_caps(screen);
