@@ -510,6 +510,20 @@ struct rc_list *
 rc_variable_list_get_writers_one_reader(struct rc_list *var_list, unsigned int src_type, void *src)
 {
    struct rc_list *writer_list = rc_variable_list_get_writers(var_list, src_type, src);
+   /* XXX: If the read isn't undef, there certainly should be a writer.
+    * However, the get_writers doesn't work for:
+    *
+    * DP3 TEMP[1].x, ...
+    * DP3 TEMP[1].y, ...
+    * MUL TEMP[2].x, TEMP[1].x, ...
+    * MUL TEMP[2].y, TEMP[1].y, ...
+    *
+    * We fail to find the writer_list for TEMP[1].y, because the head of the
+    * variable list is TEMP[1].x (TEMP[1].y is a Friend), and TEMP[1].x's
+    * variable (correctly) doesn't have the TEMP[1].y in its readers list.
+    */
+   if (!writer_list)
+      return NULL;
    struct rc_list *reader_list = rc_variable_readers_union(writer_list->Item);
    if (rc_list_count(reader_list) > 1) {
       return NULL;
