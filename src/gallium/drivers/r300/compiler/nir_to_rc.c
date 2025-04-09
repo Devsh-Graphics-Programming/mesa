@@ -2052,6 +2052,17 @@ nir_to_rc(struct nir_shader *s, struct pipe_screen *screen,
       NIR_PASS(progress, s, nir_opt_constant_folding);
    } while (progress);
 
+   /* One pass of late algebraic to get optimizations like "flt(a+b, 0) ->
+    * flt(a, -b) before we go fusing ffmas.
+    */
+   NIR_PASS(_, s, nir_opt_algebraic_late);
+
+   /* Fuse ffmas before settling late algebraic (which has things that take
+    * fused ffmas and turn them into lrps).
+    */
+   NIR_PASS(_, s, nir_opt_fuse_ffma, NULL);
+
+
    do {
       progress = false;
       NIR_PASS(progress, s, nir_opt_algebraic_late);
