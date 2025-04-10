@@ -1,19 +1,21 @@
 dEQP-GLES2.functional.clipping.point.wide_point_clip,Fail
 dEQP-GLES2.functional.clipping.point.wide_point_clip_viewport_center,Fail
 dEQP-GLES2.functional.clipping.point.wide_point_clip_viewport_corner,Fail
+dEQP-GLES2.functional.clipping.line.wide_line_clip_viewport_center,Fail
+dEQP-GLES2.functional.clipping.line.wide_line_clip_viewport_corner,Fail
 dEQP-GLES2.functional.polygon_offset.default_displacement_with_units,Fail
 dEQP-GLES2.functional.polygon_offset.fixed16_displacement_with_units,Fail
 dEQP-GLES2.functional.rasterization.interpolation.basic.line_loop_wide,Fail
 dEQP-GLES2.functional.rasterization.interpolation.basic.line_strip_wide,Fail
 dEQP-GLES2.functional.rasterization.interpolation.basic.lines_wide,Fail
 dEQP-GLES2.functional.rasterization.interpolation.projected.line_strip_wide,Fail
+dEQP-GLES2.functional.rasterization.interpolation.projected.lines_wide,Fail
 dEQP-GLES2.functional.rasterization.limits.points,Fail
 dEQP-GLES3.functional.clipping.line.wide_line_clip_viewport_center,Fail
 dEQP-GLES3.functional.clipping.line.wide_line_clip_viewport_corner,Fail
 dEQP-GLES3.functional.clipping.point.wide_point_clip,Fail
 dEQP-GLES3.functional.clipping.point.wide_point_clip_viewport_center,Fail
 dEQP-GLES3.functional.clipping.point.wide_point_clip_viewport_corner,Fail
-dEQP-GLES3.functional.draw.random.124,Fail
 dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.0,Fail
 dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.1,Fail
 dEQP-GLES3.functional.draw_buffers_indexed.random.max_implementation_draw_buffers.10,Fail
@@ -43,6 +45,7 @@ dEQP-GLES3.functional.draw_buffers_indexed.random.max_required_draw_buffers.4,Fa
 dEQP-GLES3.functional.draw_buffers_indexed.random.max_required_draw_buffers.5,Fail
 dEQP-GLES3.functional.draw_buffers_indexed.random.max_required_draw_buffers.7,Fail
 dEQP-GLES3.functional.draw_buffers_indexed.random.max_required_draw_buffers.9,Fail
+dEQP-GLES3.functional.fbo.blit.rect.nearest_consistency_out_of_bounds_mag_reverse_dst_x,Fail
 dEQP-GLES3.functional.fbo.depth.depth_test_clamp.depth24_stencil8,Fail
 dEQP-GLES3.functional.fbo.depth.depth_test_clamp.depth32f_stencil8,Fail
 dEQP-GLES3.functional.fbo.depth.depth_test_clamp.depth_component16,Fail
@@ -98,6 +101,7 @@ dEQP-GLES3.functional.multisample.fbo_max_samples.proportionality_alpha_to_cover
 dEQP-GLES3.functional.multisample.fbo_max_samples.proportionality_sample_coverage,Fail
 dEQP-GLES3.functional.multisample.fbo_max_samples.proportionality_sample_coverage_inverted,Fail
 dEQP-GLES3.functional.multisample.fbo_max_samples.sample_coverage_invert,Fail
+dEQP-GLES3.functional.negative_api.buffer.blit_framebuffer_multisample,Fail
 dEQP-GLES3.functional.negative_api.buffer.read_pixels_fbo_format_mismatch,Fail
 dEQP-GLES3.functional.polygon_offset.default_displacement_with_units,Fail
 dEQP-GLES3.functional.polygon_offset.fixed16_displacement_with_units,Fail
@@ -105,6 +109,7 @@ dEQP-GLES3.functional.polygon_offset.fixed24_displacement_with_units,Fail
 dEQP-GLES3.functional.polygon_offset.float32_displacement_with_units,Fail
 dEQP-GLES3.functional.rasterization.fbo.rbo_multisample_max.primitives.lines_wide,Fail
 dEQP-GLES3.functional.rasterization.fbo.rbo_singlesample.interpolation.lines_wide,Fail
+dEQP-GLES3.functional.rasterization.fbo.texture_2d.interpolation.lines_wide,Fail
 dEQP-GLES3.functional.rasterization.interpolation.basic.line_loop_wide,Fail
 dEQP-GLES3.functional.rasterization.interpolation.basic.line_strip_wide,Fail
 dEQP-GLES3.functional.rasterization.interpolation.projected.line_loop_wide,Fail
@@ -340,6 +345,9 @@ dEQP-GLES3.functional.texture.filtering.3d.combinations.nearest_mipmap_nearest_l
 dEQP-GLES3.functional.texture.filtering.3d.combinations.nearest_mipmap_nearest_linear_repeat_mirror_repeat,Fail
 dEQP-GLES3.functional.texture.filtering.3d.combinations.nearest_mipmap_nearest_linear_repeat_repeat_mirror,Fail
 dEQP-GLES3.functional.texture.filtering.3d.combinations.nearest_mipmap_nearest_linear_repeat_repeat_repeat,Fail
+dEQP-GLES3.functional.texture.filtering.3d.formats.bgra8_linear_mipmap_linear,Fail
+dEQP-GLES3.functional.texture.filtering.3d.formats.bgra8_linear_mipmap_nearest,Fail
+dEQP-GLES3.functional.texture.filtering.3d.formats.bgra_nearest_mipmap_nearest,Fail
 dEQP-GLES3.functional.texture.filtering.3d.formats.r11f_g11f_b10f_linear,Fail
 dEQP-GLES3.functional.texture.filtering.3d.formats.r11f_g11f_b10f_linear_mipmap_linear,Fail
 dEQP-GLES3.functional.texture.filtering.3d.formats.r11f_g11f_b10f_linear_mipmap_nearest,Fail
@@ -474,6 +482,8 @@ dEQP-GLES31.functional.fbo.no_attachments.random.14,Fail
 dEQP-GLES31.functional.fbo.no_attachments.random.15,Fail
 dEQP-GLES31.functional.fbo.no_attachments.random.4,Fail
 dEQP-GLES31.functional.fbo.no_attachments.random.9,Fail
+dEQP-GLES31.functional.geometry_shading.query.primitives_generated_no_amplification,Fail
+dEQP-GLES31.functional.geometry_shading.query.primitives_generated_partial_primitives,Fail
 dEQP-GLES31.functional.image_load_store.early_fragment_tests.early_fragment_tests_stencil,Fail
 dEQP-GLES31.functional.image_load_store.early_fragment_tests.early_fragment_tests_stencil_fbo,Fail
 dEQP-GLES31.functional.image_load_store.early_fragment_tests.no_early_fragment_tests_depth,Fail
@@ -499,6 +509,7 @@ dEQP-GLES31.functional.state_query.texture.texture_2d_multisample_array.texture_
 dEQP-GLES31.functional.state_query.texture.texture_2d_multisample_array.texture_immutable_levels_pure_uint,Fail
 dEQP-GLES31.functional.texture.border_clamp.depth_compare_mode.depth32f_stencil8.linear_size_npot,Fail
 dEQP-GLES31.functional.texture.border_clamp.depth_compare_mode.depth32f_stencil8.linear_size_pot,Fail
+dEQP-GLES31.functional.texture.border_clamp.range_clamp.linear_float_color,Fail
 dEQP-GLES31.functional.texture.filtering.cube_array.formats.rgb10_a2_linear_mipmap_linear,Fail
 dEQP-GLES31.functional.texture.filtering.cube_array.formats.rgb10_a2_nearest_mipmap_linear,Fail
 dEQP-GLES31.functional.texture.filtering.cube_array.sizes.128x128x12_linear,Fail
@@ -720,6 +731,7 @@ KHR-GL33.CommonBugs.CommonBug_ParenthesisInLayoutQualifierIntegerValue,Fail
 KHR-GL33.clip_distance.functional,Fail
 KHR-GL33.cull_distance.coverage,Fail
 KHR-GL33.cull_distance.functional,Fail
+KHR-GL33.framebuffer_blit.framebuffer_blit_functionality_multisampled_to_singlesampled_blit,Fail
 KHR-GL33.pipeline_statistics_query_tests_ARB.functional_compute_shader_invocations,Fail
 KHR-GL33.pipeline_statistics_query_tests_ARB.functional_fragment_shader_invocations,Fail
 KHR-GL33.pipeline_statistics_query_tests_ARB.functional_primitives_vertices_submitted_and_clipping_input_output_primitives,Fail
@@ -810,6 +822,7 @@ KHR-GLES2.texture_3d.filtering.sizes.63x63x63_linear_mipmap_linear,Fail
 KHR-GLES2.texture_3d.filtering.sizes.63x63x63_linear_mipmap_nearest,Fail
 KHR-GLES2.texture_3d.filtering.sizes.63x63x63_nearest_mipmap_linear,Fail
 KHR-GLES2.texture_3d.filtering.sizes.63x63x63_nearest_mipmap_nearest,Fail
+KHR-GLES3.clip_distance.functional,Fail
 KHR-GLES3.framebuffer_completeness.all_rbos_expect_same_numsamples,Fail
 KHR-GLES3.framebuffer_completeness.rbo_and_texture_expect_zero_numsamples,Fail
 KHR-GLES3.shaders.indexing.tmp_array.vertexid,Fail
@@ -867,14 +880,9 @@ glx@glx-visuals-stencil -pixmap,Crash
 
 glx@glx_arb_create_context_no_error@no error,Fail
 
-glx@glx_ext_import_context@free context,Fail
-glx@glx_ext_import_context@get context id,Fail
 glx@glx_ext_import_context@get current display,Fail
 glx@glx_ext_import_context@import context- multi process,Fail
 glx@glx_ext_import_context@import context- single process,Fail
-glx@glx_ext_import_context@imported context has same context id,Fail
-glx@glx_ext_import_context@make current- multi process,Fail
-glx@glx_ext_import_context@make current- single process,Fail
 glx@glx_ext_import_context@query context info,Fail
 hiz@hiz-depth-read-window-stencil0,Fail
 hiz@hiz-depth-read-window-stencil1,Fail
@@ -884,6 +892,7 @@ hiz@hiz-stencil-read-window-depth0,Fail
 hiz@hiz-stencil-read-window-depth1,Fail
 hiz@hiz-stencil-test-window-depth0,Fail
 hiz@hiz-stencil-test-window-depth1,Fail
+shaders@glsl-fs-fogscale@vs and fs,Fail
 spec@!opengl 1.0@gl-1.0-drawbuffer-modes,Fail
 spec@!opengl 1.0@gl-1.0-swapbuffers-behavior,Fail
 spec@!opengl 1.0@rasterpos,Fail
@@ -1003,6 +1012,15 @@ spec@arb_framebuffer_no_attachments@arb_framebuffer_no_attachments-atomic,Fail
 spec@arb_framebuffer_no_attachments@arb_framebuffer_no_attachments-atomic@MS4,Fail
 
 spec@arb_get_program_binary@restore-sso-program,Fail
+
+spec@arb_internalformat_query2@all internalformat_<x>_size pname checks,Fail
+spec@arb_internalformat_query2@all internalformat_<x>_size pname checks@GL_INTERNALFORMAT_ALPHA_SIZE,Fail
+spec@arb_internalformat_query2@all internalformat_<x>_size pname checks@GL_INTERNALFORMAT_BLUE_SIZE,Fail
+spec@arb_internalformat_query2@all internalformat_<x>_size pname checks@GL_INTERNALFORMAT_DEPTH_SIZE,Fail
+spec@arb_internalformat_query2@all internalformat_<x>_size pname checks@GL_INTERNALFORMAT_GREEN_SIZE,Fail
+spec@arb_internalformat_query2@all internalformat_<x>_size pname checks@GL_INTERNALFORMAT_RED_SIZE,Fail
+
+spec@arb_occlusion_query@occlusion_query_meta_save,Fail
 spec@arb_occlusion_query@occlusion_query_meta_no_fragments,Fail
 
 spec@arb_program_interface_query@arb_program_interface_query-getprogramresourceindex,Fail
@@ -1232,7 +1250,12 @@ spec@nv_primitive_restart@primitive-restart-draw-mode-triangles,Fail
 spec@nv_read_depth@read_depth_gles3,Fail
 
 spec@!opengl 1.0@depth-clear-precision-check,Fail
+spec@!opengl 1.0@depth-clear-precision-check@depth16,Fail
+spec@!opengl 1.0@depth-clear-precision-check@depth24,Fail
 spec@!opengl 1.0@depth-clear-precision-check@depth32,Fail
+spec@!opengl 1.0@depth-clear-precision-check@depth24_stencil8,Fail
+spec@!opengl 2.0@vertex-program-two-side enabled front back front2,Fail
+spec@!opengl 2.0@vertex-program-two-side enabled front back front2@gs-out and fs,Fail
 spec@arb_texture_buffer_object@texture-buffer-size-clamp,Fail
 
 spec@nv_shader_atomic_float@execution@ssbo-atomicexchange-float,Fail
