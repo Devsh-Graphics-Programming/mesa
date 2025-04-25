@@ -260,6 +260,7 @@ vtn_variable_resource_index(struct vtn_builder *b, struct vtn_variable *var,
    nir_intrinsic_set_desc_set(instr, var->descriptor_set);
    nir_intrinsic_set_binding(instr, var->binding);
    nir_intrinsic_set_desc_type(instr, vk_desc_type_for_mode(b, var->mode));
+   nir_intrinsic_set_resource_type(instr, var->var->data.resource_type);
 
    nir_address_format addr_format = vtn_mode_to_address_format(b, var->mode);
    nir_def_init(&instr->instr, &instr->def,
@@ -2456,6 +2457,43 @@ vtn_create_variable(struct vtn_builder *b, struct vtn_value *val,
 
    /* Propagate access flags from the OpVariable decorations. */
    val->pointer->access |= var->access;
+
+   switch (without_array->base_type) {
+   case vtn_base_type_image:
+      if (glsl_type_is_image(without_array->glsl_image)) {
+         if (var->access & ACCESS_NON_WRITEABLE)
+            var->var->data.resource_type = VK_SPIRV_RESOURCE_TYPE_READ_ONLY_IMAGE_BIT_EXT;
+         else
+            var->var->data.resource_type = VK_SPIRV_RESOURCE_TYPE_READ_WRITE_IMAGE_BIT_EXT;
+      } else {
+         var->var->data.resource_type = VK_SPIRV_RESOURCE_TYPE_SAMPLED_IMAGE_BIT_EXT;
+      }
+      break;
+   case vtn_base_type_sampler:
+      var->var->data.resource_type = VK_SPIRV_RESOURCE_TYPE_SAMPLER_BIT_EXT;
+      break;
+   case vtn_base_type_sampled_image:
+      var->var->data.resource_type = VK_SPIRV_RESOURCE_TYPE_COMBINED_SAMPLED_IMAGE_BIT_EXT;
+      break;
+   case vtn_base_type_accel_struct:
+      var->var->data.resource_type = VK_SPIRV_RESOURCE_TYPE_ACCELERATION_STRUCTURE_BIT_EXT;
+      break;
+   default:
+      switch (var->mode) {
+      case vtn_variable_mode_ubo:
+         var->var->data.resource_type = VK_SPIRV_RESOURCE_TYPE_UNIFORM_BUFFER_BIT_EXT;
+         break;
+      case vtn_variable_mode_ssbo:
+         if (var->access & ACCESS_NON_WRITEABLE)
+            var->var->data.resource_type = VK_SPIRV_RESOURCE_TYPE_READ_ONLY_STORAGE_BUFFER_BIT_EXT;
+         else
+            var->var->data.resource_type = VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT;
+         break;
+      default:
+         break;
+      }
+      break;
+   }
 
    if ((var->mode == vtn_variable_mode_input ||
         var->mode == vtn_variable_mode_output) &&

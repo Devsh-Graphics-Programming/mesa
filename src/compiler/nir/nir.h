@@ -710,6 +710,9 @@ typedef struct nir_variable {
        */
       unsigned access : 9;
 
+      /* VkSpirvResourceTypeFlagBitsKHR bit index that this variable would have. */
+      unsigned resource_type : 9;
+
       /**
        * Descriptor set binding for sampler or UBO.
        */
@@ -3139,6 +3142,7 @@ typedef struct nir_binding {
    nir_variable *var;
    unsigned desc_set;
    unsigned binding;
+   unsigned resource_type;
    unsigned num_indices;
    nir_src indices[4];
    bool read_first_invocation;
