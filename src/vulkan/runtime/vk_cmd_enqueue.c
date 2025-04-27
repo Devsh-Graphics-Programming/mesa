@@ -754,6 +754,33 @@ VKAPI_ATTR void VKAPI_CALL vk_cmd_enqueue_CmdPushConstants2(
    list_addtail(&cmd->cmd_link, &cmd_buffer->cmd_queue.cmds);
 }
 
+VKAPI_ATTR void VKAPI_CALL
+vk_cmd_enqueue_CmdPushDataEXT(VkCommandBuffer commandBuffer, const VkPushDataInfoEXT* pPushConstantsInfo)
+{
+   VK_FROM_HANDLE(vk_command_buffer, cmd_buffer, commandBuffer);
+   struct vk_cmd_queue *queue = &cmd_buffer->cmd_queue;
+
+   struct vk_cmd_queue_entry *cmd = vk_zalloc(queue->alloc, vk_cmd_queue_type_sizes[VK_CMD_PUSH_DATA_EXT], 8,
+                                              VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+   if (!cmd)
+      return;
+
+   cmd->type = VK_CMD_PUSH_DATA_EXT;
+
+   VkPushDataInfoEXT *info = vk_zalloc(queue->alloc, sizeof(*info), 8,
+                                            VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+   void *data = vk_zalloc(queue->alloc, pPushConstantsInfo->data.size, 8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+
+   memcpy(info, pPushConstantsInfo, sizeof(*info));
+   memcpy(data, pPushConstantsInfo->data.address, pPushConstantsInfo->data.size);
+
+   cmd->u.push_data_ext.push_data_info = info;
+   info->data.address = data;
+   cmd->driver_data = data;
+
+   list_addtail(&cmd->cmd_link, &cmd_buffer->cmd_queue.cmds);
+}
+
 static void
 vk_free_cmd_push_descriptor_set2(struct vk_cmd_queue *queue,
                                  struct vk_cmd_queue_entry *cmd)
