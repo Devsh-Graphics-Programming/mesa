@@ -55,7 +55,6 @@ The three GitLab CI systems currently integrated are:
 .. toctree::
    :maxdepth: 1
 
-   bare-metal
    LAVA
    docker
 
@@ -203,10 +202,8 @@ to just run 1/10th of the test list.
 For Collabora's LAVA farm, the `device types
 <https://lava.collabora.dev/scheduler/device_types>`__ page can tell you how
 many boards of a specific tag are currently available by adding the "Idle" and
-"Busy" columns.  For bare-metal, a gitlab admin can look at the `runners
-<https://gitlab.freedesktop.org/admin/runners>`__ page.  A pipeline should
-probably not create more jobs for a board type than there are boards, unless you
-clearly have some short-runtime jobs.
+"Busy" columns. A pipeline should probably not create more jobs for a board type
+than there are boards, unless you clearly have some short-runtime jobs.
 
 If a HW CI farm goes offline (network dies and all CI pipelines end up
 stalled) or its runners are consistently spuriously failing (disk
