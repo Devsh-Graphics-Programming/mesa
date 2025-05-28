@@ -3,7 +3,7 @@ include:
 
 a306-gl:
   extends:
-    - .baremetal-deqp-test
+    # .baremetal-deqp-test
     - .a306-test
   variables:
     DEQP_SUITE: freedreno-a306
@@ -12,7 +12,7 @@ a306-gl:
 
 a306-piglit:
   extends:
-    - .baremetal-deqp-test
+    # .baremetal-deqp-test
     - .a306-test
     - .test-piglit
     - .google-freedreno-manual-rules
@@ -26,7 +26,7 @@ a306-piglit:
 # it started.
 .a306-piglit-gl:
   extends:
-    - .baremetal-deqp-test
+    # .baremetal-deqp-test
     - .a306-test
     - .test-piglit
     - .google-freedreno-manual-rules
@@ -38,7 +38,7 @@ a306-piglit:
 
 a306-piglit-shader:
   extends:
-    - .baremetal-deqp-test
+    # .baremetal-deqp-test
     - .a306-test
     - .test-piglit
     - .google-freedreno-manual-rules
@@ -59,7 +59,7 @@ a306-traces:
 
 a530-gl:
   extends:
-    - .baremetal-deqp-test
+    # .baremetal-deqp-test
     - .test-piglit
     - .a530-test
   variables:
@@ -79,7 +79,7 @@ a530-traces:
 
 a530-piglit:
   extends:
-    - .baremetal-deqp-test
+    # .baremetal-deqp-test
     - .a530-test
     - .test-piglit
     - .google-freedreno-manual-rules
@@ -268,7 +268,7 @@ a660-vk-full:
 # X11 takes over the screen, wayland is run headless.
 a630-gl:
   extends:
-    - .baremetal-deqp-test
+    # .baremetal-deqp-test
     - .google-freedreno-test-gl
     - .a630-test
   rules:
@@ -281,10 +281,10 @@ a630-gl:
 
 a630-gles-asan:
   extends:
-    - .baremetal-deqp-test
+    # .baremetal-deqp-test
     - .google-freedreno-test-gl
     - .a630-test
-    - .baremetal-arm64-asan-test-gl
+    # .baremetal-arm64-asan-test-gl
   rules:
     - when: never  # Cheza DUTs are retired and no longer active
   variables:
@@ -310,7 +310,7 @@ a630-vk:
   extends:
     - .google-freedreno-test-vk
     - .a630-test
-    - .baremetal-deqp-test
+    # .baremetal-deqp-test
     - .google-turnip-rules
   rules:
     - when: never  # Cheza DUTs are retired and no longer active
@@ -338,8 +338,8 @@ a630-vk-asan:
   extends:
     - .google-freedreno-test-vk
     - .a630-test
-    - .baremetal-deqp-test
-    - .baremetal-arm64-asan-test-vk
+    # .baremetal-deqp-test
+    # .baremetal-arm64-asan-test-vk
     - .google-turnip-rules
   rules:
     - when: never  # Cheza DUTs are retired and no longer active
@@ -350,7 +350,7 @@ a630-vk-asan:
 a630-piglit:
   extends:
     - .google-freedreno-test-gl
-    - .baremetal-deqp-test
+    # .baremetal-deqp-test
     - .a630-test
     - .test-piglit
     # Note that piglit has GL+VK integration testing.
@@ -363,7 +363,7 @@ a630-piglit:
 
 a630-piglit-full:
   extends:
-    - .baremetal-deqp-test
+    # .baremetal-deqp-test
     - .google-freedreno-test-gl
     - .a630-test
     - .test-piglit
