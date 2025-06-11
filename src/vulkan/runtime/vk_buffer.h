@@ -86,6 +86,23 @@ vk_buffer_range(const struct vk_buffer *buffer,
    }
 }
 
+static inline VkDeviceAddressRangeEXT
+vk_buffer_address_range(const struct vk_buffer *buffer,
+                        VkDeviceSize offset, VkDeviceSize range)
+{
+   /* Since we're returning a size along with the address, it's safe for this
+    * helper to automatically handle null descriptor cases by returning a zero
+    * address and size.
+    */
+   if (buffer == NULL || range == 0)
+      return (VkDeviceAddressRangeEXT) { .size = 0 };
+
+   return (VkDeviceAddressRangeEXT) {
+      .address = vk_buffer_address(buffer, offset),
+      .size = vk_buffer_range(buffer, offset, range),
+   };
+}
+
 #ifdef __cplusplus
 }
 #endif
