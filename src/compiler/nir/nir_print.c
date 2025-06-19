@@ -1193,6 +1193,33 @@ vulkan_descriptor_type_name(VkDescriptorType type)
    }
 }
 
+static const char *
+vk_spirv_resource_type_name(VkSpirvResourceTypeFlagBitsEXT type)
+{
+   switch (type) {
+   case VK_SPIRV_RESOURCE_TYPE_SAMPLER_BIT_EXT:
+      return "sampler";
+   case VK_SPIRV_RESOURCE_TYPE_SAMPLED_IMAGE_BIT_EXT:
+      return "texture";
+   case VK_SPIRV_RESOURCE_TYPE_READ_ONLY_IMAGE_BIT_EXT:
+      return "RO-image";
+   case VK_SPIRV_RESOURCE_TYPE_READ_WRITE_IMAGE_BIT_EXT:
+      return "RW-image";
+   case VK_SPIRV_RESOURCE_TYPE_COMBINED_SAMPLED_IMAGE_BIT_EXT:
+      return "texture+sampler";
+   case VK_SPIRV_RESOURCE_TYPE_UNIFORM_BUFFER_BIT_EXT:
+      return "UBO";
+   case VK_SPIRV_RESOURCE_TYPE_READ_ONLY_STORAGE_BUFFER_BIT_EXT:
+      return "RO-SSBO";
+   case VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT:
+      return "RW-SSBO";
+   case VK_SPIRV_RESOURCE_TYPE_ACCELERATION_STRUCTURE_BIT_EXT:
+      return "accel-struct";
+   default:
+      return "unknown";
+   }
+}
+
 static void
 print_alu_type(nir_alu_type type, print_state *state)
 {
@@ -1376,6 +1403,13 @@ print_intrinsic_instr(nir_intrinsic_instr *instr, print_state *state)
       case NIR_INTRINSIC_DESC_TYPE: {
          VkDescriptorType desc_type = nir_intrinsic_desc_type(instr);
          fprintf(fp, "desc_type=%s", vulkan_descriptor_type_name(desc_type));
+         break;
+      }
+
+      case NIR_INTRINSIC_RESOURCE_TYPE: {
+         VkSpirvResourceTypeFlagBitsEXT res_type =
+            nir_intrinsic_resource_type(instr);
+         fprintf(fp, "resource_type=%s", vk_spirv_resource_type_name(res_type));
          break;
       }
 
