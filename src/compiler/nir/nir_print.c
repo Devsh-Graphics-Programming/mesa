@@ -2025,6 +2025,12 @@ print_tex_instr(nir_tex_instr *instr, print_state *state)
       case nir_tex_src_sampler_handle:
          fprintf(fp, "(sampler_handle)");
          break;
+      case nir_tex_src_texture_heap_offset:
+         fprintf(fp, "(texture_heap_offset)");
+         break;
+      case nir_tex_src_sampler_heap_offset:
+         fprintf(fp, "(sampler_heap_offset)");
+         break;
       case nir_tex_src_plane:
          fprintf(fp, "(plane)");
          break;
