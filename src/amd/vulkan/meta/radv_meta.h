@@ -84,6 +84,8 @@ enum radv_meta_object_key_type {
    RADV_META_OBJECT_KEY_COPY_BUFFER_TO_IMAGE_R32G32B32,
    RADV_META_OBJECT_KEY_COPY_IMAGE,
    RADV_META_OBJECT_KEY_COPY_IMAGE_R32G32B32,
+   RADV_META_OBJECT_KEY_COPY_MEMORY_INDIRECT_PREPROCESS_CS,
+   RADV_META_OBJECT_KEY_COPY_MEMORY_INDIRECT_CS,
    RADV_META_OBJECT_KEY_COPY_VRS_HTILE,
    RADV_META_OBJECT_KEY_CLEAR_CS,
    RADV_META_OBJECT_KEY_CLEAR_CS_R32G32B32,
@@ -296,6 +298,9 @@ void radv_meta_bind_descriptors(struct radv_cmd_buffer *cmd_buffer, VkPipelineBi
                                 const VkDescriptorGetInfoEXT *descriptors);
 
 enum radv_copy_flags radv_get_copy_flags_from_bo(const struct radeon_winsys_bo *bo);
+
+void radv_compute_copy_memory_indirect(struct radv_cmd_buffer *cmd_buffer,
+                                       const VkCopyMemoryIndirectInfoKHR *pCopyMemoryIndirectInfo);
 
 #ifdef __cplusplus
 }

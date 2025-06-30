@@ -1589,3 +1589,71 @@ radv_meta_nir_build_clear_hiz_compute_shader(struct radv_device *dev, int sample
 
    return b.shader;
 }
+
+static nir_def *
+nir_udiv_round_up(nir_builder *b, nir_def *n, nir_def *d)
+{
+   return nir_udiv(b, nir_iadd(b, n, nir_iadd_imm(b, d, -1)), d);
+}
+
+/* Copy memory->memory shaders. */
+nir_shader *
+radv_meta_nir_build_copy_memory_indirect_preprocess_cs(struct radv_device *dev)
+{
+   nir_builder b = radv_meta_nir_init_shader(dev, MESA_SHADER_COMPUTE, "meta_copy_memory_indirect_preprocess_cs");
+   b.shader->info.workgroup_size[0] = 64;
+
+   nir_def *global_id = radv_meta_nir_get_global_ids(&b, 1);
+
+   nir_def *copy_addr = nir_load_push_constant(&b, 1, 64, nir_imm_int(&b, 0), .base = 0, .range = 8);
+   nir_def *copy_stride = nir_load_push_constant(&b, 1, 64, nir_imm_int(&b, 0), .base = 8, .range = 8);
+   nir_def *upload_addr = nir_load_push_constant(&b, 1, 64, nir_imm_int(&b, 0), .base = 16, .range = 8);
+
+   /* Compute the indirect address (copy_addr + copy_idx * copy_stride). */
+   nir_def *indirect_addr = nir_iadd(&b, copy_addr, nir_imul(&b, nir_u2u64(&b, global_id), copy_stride));
+
+   /* Load the number of bytes to copy. */
+   nir_def *copy_size =
+      nir_build_load_global(&b, 1, 32, nir_iadd_imm(&b, indirect_addr, offsetof(VkCopyMemoryIndirectCommandKHR, size)));
+
+   /* Compute the number of workgroups for the 1D dispatch. */
+   nir_def *dims[3];
+   dims[0] = nir_udiv_round_up(&b, copy_size, nir_imm_int(&b, 4)); /* copy 4B per lane */
+   dims[1] = nir_imm_int(&b, 1);
+   dims[2] = nir_imm_int(&b, 1);
+
+   /* Store the number of workgroups for the indirect compute dispatch. */
+   nir_def *dst_offset = nir_imul_imm(&b, global_id, sizeof(VkDispatchIndirectCommand));
+   nir_build_store_global(&b, nir_vec(&b, dims, 3), nir_iadd(&b, upload_addr, nir_u2u64(&b, dst_offset)),
+                          .align_mul = 4);
+
+   return b.shader;
+}
+
+nir_shader *
+radv_meta_nir_build_copy_memory_indirect_cs(struct radv_device *dev)
+{
+   nir_builder b = radv_meta_nir_init_shader(dev, MESA_SHADER_COMPUTE, "meta_copy_memory_indirect_cs");
+   b.shader->info.workgroup_size[0] = 64;
+
+   nir_def *global_id = radv_meta_nir_get_global_ids(&b, 1);
+
+   nir_def *copy_addr = nir_load_push_constant(&b, 1, 64, nir_imm_int(&b, 0), .range = 8);
+
+   nir_def *copy_data = nir_build_load_global(&b, 2, 64, copy_addr);
+   nir_def *src_addr = nir_channel(&b, copy_data, 0);
+   nir_def *dst_addr = nir_channel(&b, copy_data, 1);
+   nir_def *size =
+      nir_build_load_global(&b, 1, 32, nir_iadd_imm(&b, copy_addr, offsetof(VkCopyMemoryIndirectCommandKHR, size)));
+
+   const uint32_t bytes_per_invocation = 4;
+
+   nir_def *max_offset = nir_isub_imm(&b, bytes_per_invocation, size);
+   nir_def *offset = nir_u2u64(&b, nir_umin(&b, nir_imul_imm(&b, global_id, bytes_per_invocation), max_offset));
+
+   nir_def *data = nir_build_load_global(&b, 1, 32, nir_iadd(&b, src_addr, offset), .align_mul = 4);
+
+   nir_build_store_global(&b, data, nir_iadd(&b, dst_addr, offset), .align_mul = 4);
+
+   return b.shader;
+}

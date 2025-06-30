@@ -753,3 +753,24 @@ radv_CmdCopyImage2(VkCommandBuffer commandBuffer, const VkCopyImageInfo2 *pCopyI
 
    radv_resume_conditional_rendering(cmd_buffer);
 }
+
+VKAPI_ATTR void VKAPI_CALL
+radv_CmdCopyMemoryIndirectKHR(VkCommandBuffer commandBuffer, const VkCopyMemoryIndirectInfoKHR *pCopyMemoryIndirectInfo)
+{
+   VK_FROM_HANDLE(radv_cmd_buffer, cmd_buffer, commandBuffer);
+
+   if (!pCopyMemoryIndirectInfo->copyCount)
+      return;
+
+   assert(!(pCopyMemoryIndirectInfo->copyAddressRange.address & 3));
+   assert(!(pCopyMemoryIndirectInfo->copyAddressRange.stride & 3));
+   assert(pCopyMemoryIndirectInfo->copyAddressRange.stride >= sizeof(VkCopyMemoryIndirectCommandKHR));
+   assert(pCopyMemoryIndirectInfo->copyCount <=
+          (pCopyMemoryIndirectInfo->copyAddressRange.size / pCopyMemoryIndirectInfo->copyAddressRange.stride));
+
+   radv_suspend_conditional_rendering(cmd_buffer);
+
+   radv_compute_copy_memory_indirect(cmd_buffer, pCopyMemoryIndirectInfo);
+
+   radv_resume_conditional_rendering(cmd_buffer);
+}

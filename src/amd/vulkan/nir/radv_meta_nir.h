@@ -115,6 +115,9 @@ nir_shader *radv_meta_nir_build_resolve_fs(struct radv_device *dev);
 
 nir_shader *radv_meta_nir_build_clear_hiz_compute_shader(struct radv_device *dev, int samples);
 
+nir_shader *radv_meta_nir_build_copy_memory_indirect_preprocess_cs(struct radv_device *dev);
+nir_shader *radv_meta_nir_build_copy_memory_indirect_cs(struct radv_device *dev);
+
 #ifdef __cplusplus
 }
 #endif
