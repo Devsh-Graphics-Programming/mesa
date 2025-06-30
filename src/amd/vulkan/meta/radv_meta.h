@@ -86,6 +86,10 @@ enum radv_meta_object_key_type {
    RADV_META_OBJECT_KEY_COPY_IMAGE_R32G32B32,
    RADV_META_OBJECT_KEY_COPY_MEMORY_INDIRECT_PREPROCESS_CS,
    RADV_META_OBJECT_KEY_COPY_MEMORY_INDIRECT_CS,
+   RADV_META_OBJECT_KEY_COPY_MEMORY_TO_IMAGE_INDIRECT_PREPROCESS_CS,
+   RADV_META_OBJECT_KEY_COPY_MEMORY_TO_IMAGE_INDIRECT_CS,
+   RADV_META_OBJECT_KEY_COPY_MEMORY_TO_IMAGE_R32G32B32_INDIRECT_CS,
+   RADV_META_OBJECT_KEY_COPY_MEMORY_TO_IMAGE_INDIRECT_GFX,
    RADV_META_OBJECT_KEY_COPY_VRS_HTILE,
    RADV_META_OBJECT_KEY_CLEAR_CS,
    RADV_META_OBJECT_KEY_CLEAR_CS_R32G32B32,
@@ -258,6 +262,9 @@ void radv_update_memory(struct radv_cmd_buffer *cmd_buffer, uint64_t va, uint64_
 
 void radv_meta_decode_etc(struct radv_cmd_buffer *cmd_buffer, struct radv_image *image, VkImageLayout layout,
                           const VkImageSubresourceLayers *subresource, VkOffset3D offset, VkExtent3D extent);
+void radv_meta_decode_etc_indirect(struct radv_cmd_buffer *cmd_buffer,
+                                   const VkCopyMemoryToImageIndirectInfoKHR *pCopyMemoryToImageIndirectInfo);
+
 void radv_meta_decode_astc(struct radv_cmd_buffer *cmd_buffer, struct radv_image *image, VkImageLayout layout,
                            const VkImageSubresourceLayers *subresource, VkOffset3D offset, VkExtent3D extent);
 
@@ -301,6 +308,13 @@ enum radv_copy_flags radv_get_copy_flags_from_bo(const struct radeon_winsys_bo *
 
 void radv_compute_copy_memory_indirect(struct radv_cmd_buffer *cmd_buffer,
                                        const VkCopyMemoryIndirectInfoKHR *pCopyMemoryIndirectInfo);
+
+void
+radv_compute_copy_memory_to_image_indirect(struct radv_cmd_buffer *cmd_buffer,
+                                           const VkCopyMemoryToImageIndirectInfoKHR *pCopyMemoryToImageIndirectInfo);
+
+void radv_gfx_copy_memory_to_image_indirect(struct radv_cmd_buffer *cmd_buffer,
+                                            const VkCopyMemoryToImageIndirectInfoKHR *pCopyMemoryToImageIndirectInfo);
 
 #ifdef __cplusplus
 }
