@@ -2264,6 +2264,9 @@ dri2_num_fourcc_format_planes(EGLint format)
    case DRM_FORMAT_Y416:
    case DRM_FORMAT_YUV420_8BIT:
    case DRM_FORMAT_YUV420_10BIT:
+   case __DRI_IMAGE_FOURCC_SARGB8888:
+   case __DRI_IMAGE_FOURCC_SABGR8888:
+   case __DRI_IMAGE_FOURCC_SXRGB8888:
       return 1;
 
    case DRM_FORMAT_NV12:
