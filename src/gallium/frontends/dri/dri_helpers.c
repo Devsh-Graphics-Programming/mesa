@@ -717,6 +717,28 @@ dri2_get_mapping_by_format(int format)
    return NULL;
 }
 
+enum pipe_format
+dri2_fourcc_to_format(int fourcc)
+{
+   const struct dri2_format_mapping *map = dri2_get_mapping_by_fourcc(fourcc);
+
+   if (!map)
+      return PIPE_FORMAT_NONE;
+
+   return map->pipe_format;
+}
+
+int
+dri2_format_to_fourcc(enum pipe_format format)
+{
+   const struct dri2_format_mapping *map = dri2_get_mapping_by_format(format);
+
+   if (!map)
+      return 0;
+
+   return map->dri_fourcc;
+}
+
 static enum pipe_format
 alt_pipe_format(enum pipe_format yuv_fmt)
 {
