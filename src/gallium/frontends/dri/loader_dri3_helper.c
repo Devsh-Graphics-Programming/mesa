@@ -34,6 +34,7 @@
 
 #include <X11/Xlib-xcb.h>
 
+#include "dri_helpers.h"
 #include "loader_dri_helper.h"
 #include "loader_dri3_helper.h"
 #include "pipe/p_screen.h"
@@ -1386,7 +1387,7 @@ dri3_alloc_render_buffer(struct loader_dri3_drawable *draw, unsigned int fourcc,
 {
    struct loader_dri3_buffer *buffer;
    struct dri_image *pixmap_buffer = NULL, *linear_buffer_display_gpu = NULL;
-   int format = loader_fourcc_to_image_format(fourcc);
+   int format = dri2_fourcc_to_format(fourcc);
    xcb_pixmap_t pixmap;
    xcb_sync_fence_t sync_fence;
    struct xshmfence *shm_fence;
@@ -2166,7 +2167,7 @@ loader_dri3_get_buffers(struct dri_drawable *driDrawable,
 {
    struct loader_dri3_drawable *draw = loaderPrivate;
    struct loader_dri3_buffer   *front, *back;
-   int fourcc = loader_image_format_to_fourcc(format);
+   int fourcc = dri2_format_to_fourcc(format);
    int buf_id;
 
    buffers->image_mask = 0;

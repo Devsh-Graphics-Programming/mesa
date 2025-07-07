@@ -435,6 +435,10 @@ static const struct dri2_format_mapping dri2_format_table[] = {
         PIPE_FORMAT_RGBA8888_UNORM, 1, },
       { __DRI_IMAGE_FOURCC_SARGB8888,     __DRI_IMAGE_FORMAT_SARGB8,
         PIPE_FORMAT_BGRA8888_SRGB, 1, },
+      { __DRI_IMAGE_FOURCC_SABGR8888,     __DRI_IMAGE_FORMAT_SABGR8,
+        PIPE_FORMAT_RGBA8888_SRGB, 1 },
+      { __DRI_IMAGE_FOURCC_SXRGB8888,     __DRI_IMAGE_FORMAT_SXRGB8,
+        PIPE_FORMAT_BGRX8888_SRGB, 1 },
       { DRM_FORMAT_XRGB8888,      __DRI_IMAGE_FORMAT_XRGB8888,
         PIPE_FORMAT_BGRX8888_UNORM, 1, },
       { DRM_FORMAT_RGB888,        __DRI_IMAGE_FORMAT_RGB888,
@@ -713,6 +717,28 @@ dri2_get_mapping_by_format(int format)
    return NULL;
 }
 
+enum pipe_format
+dri2_fourcc_to_format(int fourcc)
+{
+   const struct dri2_format_mapping *map = dri2_get_mapping_by_fourcc(fourcc);
+
+   if (!map)
+      return PIPE_FORMAT_NONE;
+
+   return map->pipe_format;
+}
+
+int
+dri2_format_to_fourcc(enum pipe_format format)
+{
+   const struct dri2_format_mapping *map = dri2_get_mapping_by_format(format);
+
+   if (!map)
+      return 0;
+
+   return map->dri_fourcc;
+}
+
 static enum pipe_format
 alt_pipe_format(enum pipe_format yuv_fmt)
 {
@@ -770,7 +796,9 @@ dri_query_dma_buf_formats(struct dri_screen *screen, int max, int *formats,
 
       /* The sRGB format is not a real FourCC as defined by drm_fourcc.h, so we
        * must not leak it out to clients. */
-      if (dri2_format_table[i].dri_fourcc == __DRI_IMAGE_FOURCC_SARGB8888)
+      if (dri2_format_table[i].dri_fourcc == __DRI_IMAGE_FOURCC_SARGB8888 ||
+          dri2_format_table[i].dri_fourcc == __DRI_IMAGE_FOURCC_SABGR8888 ||
+          dri2_format_table[i].dri_fourcc == __DRI_IMAGE_FOURCC_SXRGB8888)
          continue;
 
       if (pscreen->is_format_supported(pscreen, map->pipe_format,
