@@ -33,7 +33,6 @@ fi
 # script and associated bits there.
 git_sha=$(git rev-parse --short=10 HEAD)
 echo "$(cat VERSION) (git-$git_sha)" > install/VERSION
-cp -Rp .gitlab-ci/bare-metal install/
 cp -Rp .gitlab-ci/common install/
 cp -Rp .gitlab-ci/piglit install/
 cp -Rp .gitlab-ci/fossils.yml install/

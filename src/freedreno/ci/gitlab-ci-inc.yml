@@ -199,8 +199,8 @@
     # Ensure that we are using the release build artifact
     S3_ARTIFACT_NAME: mesa-arm64-default-release
   needs:
-    - job: debian/baremetal_arm64_test-gl
-      optional: true
+  # - job: debian/baremetal_arm64_test-gl
+  #   optional: true
     - debian-arm64-release
   dependencies: null
 
@@ -279,7 +279,7 @@
 
 .google-freedreno-test-gl:
   extends:
-    - .baremetal-test-arm64-gl
+    # .baremetal-test-arm64-gl
     - .google-freedreno-rules
   variables:
     VK_DRIVER: freedreno
@@ -292,7 +292,7 @@
 
 .google-freedreno-test-vk:
   extends:
-    - .baremetal-test-arm64-vk
+    # .baremetal-test-arm64-vk
     - .google-freedreno-rules
   variables:
     VK_DRIVER: freedreno

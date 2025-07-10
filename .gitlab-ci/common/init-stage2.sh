@@ -231,7 +231,7 @@ fi
 set +x
 section_end post_test_cleanup
 
-# Print the final result; both bare-metal and LAVA look for this string to get
+# Print the final result; both CI-tron and LAVA look for this string to get
 # the result of our run, so try really hard to get it out rather than losing
 # the run. The device gets shut down right at this point, and a630 seems to
 # enjoy corrupting the last line of serial output before shutdown.
