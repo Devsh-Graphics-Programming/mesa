@@ -15,7 +15,7 @@ subdir('util')
 subdir('midgard')
 subdir('compiler')
 
-if with_gallium_panfrost or with_panfrost_vk or with_tools.contains('panfrost')
+if with_drivers_clc or with_gallium_panfrost or with_panfrost_vk or with_tools.contains('panfrost')
    subdir('genxml')
    subdir('lib')
    subdir('clc')

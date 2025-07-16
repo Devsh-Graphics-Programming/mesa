@@ -2,7 +2,9 @@
 # Copyright © 2019 Collabora
 # SPDX-License-Identifier: MIT
 
-subdir('kmod')
+if with_gallium_panfrost or with_panfrost_vk
+  subdir('kmod')
+endif
 
 pixel_format_versions = ['5', '6', '7', '9', '10', '12', '13']
 libpanfrost_pixel_format = []
@@ -22,15 +24,14 @@ endforeach
 
 libpanfrost_per_arch = []
 
+libpanfrost_per_arch_files = [ 'pan_blend.c', 'pan_shader.c', 'pan_texture.c' ]
+if with_gallium_panfrost or with_panfrost_vk
+  libpanfrost_per_arch_files += 'pan_desc.c'
+endif
+
 foreach ver : ['4', '5', '6', '7', '9', '10', '12', '13']
   libpanfrost_per_arch += static_library(
-    'pan-arch-v' + ver,
-    [
-      'pan_blend.c',
-      'pan_desc.c',
-      'pan_mod.c',
-      'pan_texture.c',
-    ],
+    'pan-arch-v' + ver, libpanfrost_per_arch_files,
     include_directories : [inc_include, inc_src, inc_panfrost],
     c_args : ['-DPAN_ARCH=' + ver],
     gnu_symbol_visibility : 'hidden',
@@ -49,10 +50,18 @@ libpanfrost_lib_files = files(
   'pan_tiler.c',
   'pan_layout.c',
   'pan_scratch.c',
-  'pan_props.c',
   'pan_util.c',
   'pan_afbc.c',
 )
+
+if with_gallium_panfrost or with_panfrost_vk
+  libpanfrost_lib_files += files('pan_props.c')
+endif
+
+libpanfrost_link_with = [libpanfrost_pixel_format, libpanfrost_per_arch]
+if with_gallium_panfrost or with_panfrost_vk
+  libpanfrost_link_with += libpankmod_lib
+endif
 
 libpanfrost_lib = static_library(
   'panfrost_lib',
@@ -62,13 +71,18 @@ libpanfrost_lib = static_library(
   gnu_symbol_visibility : 'hidden',
   dependencies: [dep_libdrm, idep_nir, idep_mesautil],
   build_by_default : false,
-  link_with: [libpanfrost_pixel_format, libpanfrost_per_arch, libpankmod_lib],
+  link_with: libpanfrost_link_with,
 )
+
+libpanfrost_dependencies = [deps_for_libpanfrost, idep_nir]
+if with_gallium_panfrost or with_panfrost_vk
+  libpanfrost_dependencies = libpankmod_dep
+endif
 
 libpanfrost_dep = declare_dependency(
   link_with: [libpanfrost_lib, libpanfrost_decode, libpanfrost_midgard, libpanfrost_bifrost, libpanfrost_pixel_format, libpanfrost_per_arch],
   include_directories: [inc_include, inc_src, inc_panfrost],
-  dependencies: [deps_for_libpanfrost, libpankmod_dep, idep_nir],
+  dependencies: libpanfrost_dependencies,
 )
 
 if with_tests
