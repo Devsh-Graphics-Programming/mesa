@@ -34,6 +34,7 @@
 struct vk_meta_blit_key {
    enum vk_meta_object_key_type key_type;
    enum glsl_sampler_dim dim;
+   VkFilter filter;
    VkSampleCountFlagBits src_samples;
    VkResolveModeFlagBits resolve_mode;
    VkResolveModeFlagBits stencil_resolve_mode;
@@ -505,7 +506,6 @@ do_blit(struct vk_command_buffer *cmd,
         VkFormat dst_format,
         VkImageLayout dst_image_layout,
         VkImageSubresourceLayers dst_subres,
-        VkSampler sampler,
         struct vk_meta_blit_key *key,
         struct vk_meta_blit_push_data *push,
         const struct vk_meta_rect *dst_rect,
@@ -514,6 +514,15 @@ do_blit(struct vk_command_buffer *cmd,
    struct vk_device *device = cmd->base.device;
    const struct vk_device_dispatch_table *disp = &device->dispatch_table;
    VkResult result;
+
+   VkSampler sampler = VK_NULL_HANDLE;
+   if (key->resolve_mode == VK_RESOLVE_MODE_NONE) {
+      result = get_blit_sampler(device, meta, key->filter, &sampler);
+      if (unlikely(result != VK_SUCCESS)) {
+         vk_command_buffer_set_error(cmd, result);
+         return;
+      }
+   }
 
    VkPipelineLayout pipeline_layout;
    result = get_blit_pipeline_layout(device, meta, &pipeline_layout);
@@ -724,19 +733,10 @@ vk_meta_blit_image(struct vk_command_buffer *cmd,
                    const VkImageBlit2 *regions,
                    VkFilter filter)
 {
-   struct vk_device *device = cmd->base.device;
-   VkResult result;
-
-   VkSampler sampler;
-   result = get_blit_sampler(device, meta, filter, &sampler);
-   if (unlikely(result != VK_SUCCESS)) {
-      vk_command_buffer_set_error(cmd, result);
-      return;
-   }
-
    struct vk_meta_blit_key key;
    memset(&key, 0, sizeof(key));
    key.key_type = VK_META_OBJECT_KEY_BLIT;
+   key.filter = filter,
    key.src_samples = src_image->samples;
    key.dim = vk_image_sampler_dim(src_image);
    key.dst_format = dst_format;
@@ -805,7 +805,7 @@ vk_meta_blit_image(struct vk_command_buffer *cmd,
       do_blit(cmd, meta,
               src_image, src_format, src_image_layout, src_subres,
               dst_image, dst_format, dst_image_layout, dst_subres,
-              sampler, &key, &push, &dst_rect, dst_layer_count);
+              &key, &push, &dst_rect, dst_layer_count);
    }
 }
 
@@ -841,6 +841,7 @@ vk_meta_resolve_image(struct vk_command_buffer *cmd,
    memset(&key, 0, sizeof(key));
    key.key_type = VK_META_OBJECT_KEY_BLIT;
    key.dim = vk_image_sampler_dim(src_image);
+   key.filter = VK_FILTER_NEAREST,
    key.src_samples = src_image->samples;
    key.resolve_mode = resolve_mode;
    key.stencil_resolve_mode = stencil_resolve_mode;
@@ -871,8 +872,7 @@ vk_meta_resolve_image(struct vk_command_buffer *cmd,
       do_blit(cmd, meta,
               src_image, src_format, src_image_layout, src_subres,
               dst_image, dst_format, dst_image_layout, dst_subres,
-              VK_NULL_HANDLE, &key, &push, &dst_rect,
-              dst_subres.layerCount);
+              &key, &push, &dst_rect, dst_subres.layerCount);
    }
 }
 
