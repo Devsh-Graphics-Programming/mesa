@@ -1435,6 +1435,9 @@ load("resource_heap_data", [1], [ALIGN_MUL, ALIGN_OFFSET],
 # src[] = { addr }.
 intrinsic("global_addr_to_descriptor", src_comp=[1], dest_comp=0,
           indices=[RESOURCE_TYPE], flags=[CAN_ELIMINATE, CAN_REORDER])
+# src[] = { pushed_index }.
+intrinsic("internal_resource_heap_offset", src_comp=[1], dest_comp=1,
+          flags=[CAN_ELIMINATE, CAN_REORDER])
 
 # Select an output vertex in a poly GS. Takes the stream-local vertex ID.
 intrinsic("select_vertex_poly", src_comp=[1], indices=[STREAM_ID])

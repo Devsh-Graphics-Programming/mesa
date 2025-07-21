@@ -139,6 +139,22 @@ struct vk_meta_device {
                            struct vk_meta_device *meta,
                            const struct vk_meta_rect *rect,
                            uint32_t layer_count);
+
+   /** Called to register an image view on the internal heap
+    *
+    * This hook serves a dual purpose.  The first is to inform the driver that
+    * the given image view will be used as an internal resource on this
+    * command buffer.  Second is to allow the driver to return a bit of data
+    * which meta will then push to the shader and which will show up as the
+    * input to nir_intrinsic_internal_resource_heap_offset.  It is the
+    * responsibility of the driver to pass whatever information is needed from
+    * the command buffer to the shader through this uint32_t.
+    */
+   void (*cmd_push_heap_image_view)(struct vk_command_buffer *cmd,
+                                    struct vk_meta_device *meta,
+                                    VkDescriptorType desc_type,
+                                    uint32_t push_data_offset,
+                                    VkImageView image_view);
 };
 
 static inline uint32_t

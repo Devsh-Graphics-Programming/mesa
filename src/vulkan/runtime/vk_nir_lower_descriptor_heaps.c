@@ -5,6 +5,7 @@
 
 #include "vk_nir_lower_descriptor_heaps.h"
 
+#include "vk_internal_exts.h"
 #include "vk_sampler.h"
 
 #include "nir_builder.h"
@@ -147,6 +148,13 @@ vk_hash_descriptor_heap_mappings(
 
       case VK_DESCRIPTOR_MAPPING_SOURCE_SHADER_RECORD_ADDRESS_EXT:
          HASH(&ctx, mapping->sourceData.shaderRecordAddressOffset);
+         break;
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wswitch"
+      case VK_DESCRIPTOR_MAPPING_SOURCE_INTERNAL_HEAP_WITH_PUSH_DATA_MESA:
+#pragma GCC diagnostic pop
+         HASH(&ctx, mapping->sourceData.pushDataOffset);
          break;
 
       default:
@@ -424,6 +432,15 @@ vk_build_descriptor_heap_offset(nir_builder *b,
       }
 
       return nir_iadd(b, offset, nir_imul_imm(b, shader_index, array_stride));
+   }
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wswitch"
+   case VK_DESCRIPTOR_MAPPING_SOURCE_INTERNAL_HEAP_WITH_PUSH_DATA_MESA: {
+#pragma GCC diagnostic pop
+      nir_def *push_data =
+         load_push(b, 32, mapping->sourceData.pushDataOffset);
+      return nir_internal_resource_heap_offset(b, 32, push_data);
    }
 
    default:
