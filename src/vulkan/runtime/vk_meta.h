@@ -364,11 +364,13 @@ void vk_meta_blit_image(struct vk_command_buffer *cmd,
                         VkImageLayout dst_image_layout,
                         uint32_t region_count,
                         const VkImageBlit2 *regions,
-                        VkFilter filter);
+                        VkFilter filter,
+                        bool use_heaps);
 
 void vk_meta_blit_image2(struct vk_command_buffer *cmd,
                          struct vk_meta_device *meta,
-                         const VkBlitImageInfo2 *blit);
+                         const VkBlitImageInfo2 *blit,
+                         bool use_heaps);
 
 void vk_meta_resolve_image(struct vk_command_buffer *cmd,
                            struct vk_meta_device *meta,
@@ -381,15 +383,18 @@ void vk_meta_resolve_image(struct vk_command_buffer *cmd,
                            uint32_t region_count,
                            const VkImageResolve2 *regions,
                            VkResolveModeFlagBits resolve_mode,
-                           VkResolveModeFlagBits stencil_resolve_mode);
+                           VkResolveModeFlagBits stencil_resolve_mode,
+                           bool use_heaps);
 
 void vk_meta_resolve_image2(struct vk_command_buffer *cmd,
                             struct vk_meta_device *meta,
-                            const VkResolveImageInfo2 *resolve);
+                            const VkResolveImageInfo2 *resolve,
+                            bool use_heaps);
 
 void vk_meta_resolve_rendering(struct vk_command_buffer *cmd,
                                struct vk_meta_device *meta,
-                               const VkRenderingInfo *pRenderingInfo);
+                               const VkRenderingInfo *pRenderingInfo,
+                               bool use_heaps);
 
 VkDeviceAddress vk_meta_buffer_address(struct vk_device *device,
                                        VkBuffer buffer, uint64_t offset,

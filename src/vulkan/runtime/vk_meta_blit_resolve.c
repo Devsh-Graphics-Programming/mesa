@@ -33,6 +33,7 @@
 
 struct vk_meta_blit_key {
    enum vk_meta_object_key_type key_type;
+   bool use_heaps;
    enum glsl_sampler_dim dim;
    VkFilter filter;
    VkSampleCountFlagBits src_samples;
@@ -63,6 +64,7 @@ enum blit_desc_binding {
    BLIT_DESC_BINDING_COLOR,
    BLIT_DESC_BINDING_DEPTH,
    BLIT_DESC_BINDING_STENCIL,
+   BLIT_DESC_NUM_BINDINGS,
 };
 
 static enum blit_desc_binding
@@ -82,6 +84,13 @@ struct vk_meta_blit_push_data {
    int32_t arr_delta;
    uint32_t stencil_bit;
 };
+
+static inline uint32_t
+vk_meta_blit_push_internal_image_offset(enum blit_desc_binding binding)
+{
+   assert(binding < BLIT_DESC_NUM_BINDINGS);
+   return sizeof(struct vk_meta_blit_push_data) + binding * sizeof(uint32_t);
+}
 
 static inline void
 compute_off_scale(uint32_t src_level_size,
@@ -251,6 +260,7 @@ build_blit_shader(const struct vk_meta_blit_key *key)
                                                glsl_bare_sampler_type(), NULL);
    sampler->data.descriptor_set = 0;
    sampler->data.binding = BLIT_DESC_BINDING_SAMPLER;
+   sampler->data.resource_type = VK_SPIRV_RESOURCE_TYPE_SAMPLER_BIT_EXT;
    nir_deref_instr *s = nir_build_deref_var(b, sampler);
 
    u_foreach_bit(a, key->aspects) {
@@ -301,6 +311,7 @@ build_blit_shader(const struct vk_meta_blit_key *key)
                                                   texture_type, tex_name);
       texture->data.descriptor_set = 0;
       texture->data.binding = aspect_to_tex_binding(aspect);
+      texture->data.resource_type = VK_SPIRV_RESOURCE_TYPE_SAMPLED_IMAGE_BIT_EXT;
       nir_deref_instr *t = nir_build_deref_var(b, texture);
 
       nir_def *val;
@@ -330,6 +341,48 @@ build_blit_shader(const struct vk_meta_blit_key *key)
    }
 
    return b->shader;
+}
+
+static VkSamplerCreateInfo
+get_blit_sampler_info(VkFilter filter)
+{
+   return (VkSamplerCreateInfo) {
+      .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+      .magFilter = filter,
+      .minFilter = filter,
+      .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+      .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+      .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+      .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+      .unnormalizedCoordinates = VK_FALSE,
+   };
+}
+
+static VkResult
+get_blit_sampler(struct vk_device *device,
+                 struct vk_meta_device *meta,
+                 VkFilter filter,
+                 VkSampler *sampler_out)
+{
+   struct {
+      enum vk_meta_object_key_type key_type;
+      VkFilter filter;
+   } key;
+
+   memset(&key, 0, sizeof(key));
+   key.key_type = VK_META_OBJECT_KEY_BLIT;
+   key.filter = filter;
+
+   VkSampler from_cache = vk_meta_lookup_sampler(meta, &key, sizeof(key));
+   if (from_cache != VK_NULL_HANDLE) {
+      *sampler_out = from_cache;
+      return VK_SUCCESS;
+   }
+
+   const VkSamplerCreateInfo info = get_blit_sampler_info(filter);
+
+   return vk_meta_create_sampler(device, meta, &info,
+                                 &key, sizeof(key), sampler_out);
 }
 
 static VkResult
@@ -391,8 +444,54 @@ get_blit_pipeline(struct vk_device *device,
       return VK_SUCCESS;
    }
 
+   const VkSamplerCreateInfo sampler_info = get_blit_sampler_info(key->filter);
+   const VkDescriptorSetAndBindingMappingEXT mappings[] = {{
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT,
+      .descriptorSet = 0,
+      .firstBinding = BLIT_DESC_BINDING_SAMPLER,
+      .bindingCount = 1,
+      .resourceMask = VK_SPIRV_RESOURCE_TYPE_SAMPLER_BIT_EXT,
+      .source = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_CONSTANT_OFFSET_EXT,
+      .sourceData.constantOffset = {
+         .pEmbeddedSampler = &sampler_info,
+      },
+   }, {
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT,
+      .descriptorSet = 0,
+      .firstBinding = BLIT_DESC_BINDING_COLOR,
+      .bindingCount = 1,
+      .resourceMask = VK_SPIRV_RESOURCE_TYPE_SAMPLED_IMAGE_BIT_EXT,
+      .source = VK_DESCRIPTOR_MAPPING_SOURCE_INTERNAL_HEAP_WITH_PUSH_DATA_MESA,
+      .sourceData.pushDataOffset =
+         vk_meta_blit_push_internal_image_offset(BLIT_DESC_BINDING_COLOR),
+   }, {
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT,
+      .descriptorSet = 0,
+      .firstBinding = BLIT_DESC_BINDING_DEPTH,
+      .bindingCount = 1,
+      .resourceMask = VK_SPIRV_RESOURCE_TYPE_SAMPLED_IMAGE_BIT_EXT,
+      .source = VK_DESCRIPTOR_MAPPING_SOURCE_INTERNAL_HEAP_WITH_PUSH_DATA_MESA,
+      .sourceData.pushDataOffset =
+         vk_meta_blit_push_internal_image_offset(BLIT_DESC_BINDING_DEPTH),
+   }, {
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT,
+      .descriptorSet = 0,
+      .firstBinding = BLIT_DESC_BINDING_STENCIL,
+      .bindingCount = 1,
+      .resourceMask = VK_SPIRV_RESOURCE_TYPE_SAMPLED_IMAGE_BIT_EXT,
+      .source = VK_DESCRIPTOR_MAPPING_SOURCE_INTERNAL_HEAP_WITH_PUSH_DATA_MESA,
+      .sourceData.pushDataOffset =
+         vk_meta_blit_push_internal_image_offset(BLIT_DESC_BINDING_STENCIL),
+   }};
+   const VkShaderDescriptorSetAndBindingMappingInfoEXT mapping_info = {
+      .sType = VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT,
+      .mappingCount = ARRAY_SIZE(mappings),
+      .pMappings = mappings,
+   };
+
    const VkPipelineShaderStageNirCreateInfoMESA fs_nir_info = {
       .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_NIR_CREATE_INFO_MESA,
+      .pNext = key->use_heaps ? &mapping_info : NULL,
       .nir = build_blit_shader(key),
    };
    const VkPipelineShaderStageCreateInfo fs_info = {
@@ -459,42 +558,6 @@ get_blit_pipeline(struct vk_device *device,
    return result;
 }
 
-static VkResult
-get_blit_sampler(struct vk_device *device,
-                 struct vk_meta_device *meta,
-                 VkFilter filter,
-                 VkSampler *sampler_out)
-{
-   struct {
-      enum vk_meta_object_key_type key_type;
-      VkFilter filter;
-   } key;
-
-   memset(&key, 0, sizeof(key));
-   key.key_type = VK_META_OBJECT_KEY_BLIT;
-   key.filter = filter;
-
-   VkSampler from_cache = vk_meta_lookup_sampler(meta, &key, sizeof(key));
-   if (from_cache != VK_NULL_HANDLE) {
-      *sampler_out = from_cache;
-      return VK_SUCCESS;
-   }
-
-   const VkSamplerCreateInfo info = {
-      .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-      .magFilter = filter,
-      .minFilter = filter,
-      .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
-      .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-      .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-      .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-      .unnormalizedCoordinates = VK_FALSE,
-   };
-
-   return vk_meta_create_sampler(device, meta, &info,
-                                 &key, sizeof(key), sampler_out);
-}
-
 static void
 do_blit(struct vk_command_buffer *cmd,
         struct vk_meta_device *meta,
@@ -515,44 +578,11 @@ do_blit(struct vk_command_buffer *cmd,
    const struct vk_device_dispatch_table *disp = &device->dispatch_table;
    VkResult result;
 
-   VkSampler sampler = VK_NULL_HANDLE;
-   if (key->resolve_mode == VK_RESOLVE_MODE_NONE) {
-      result = get_blit_sampler(device, meta, key->filter, &sampler);
-      if (unlikely(result != VK_SUCCESS)) {
-         vk_command_buffer_set_error(cmd, result);
-         return;
-      }
-   }
-
-   VkPipelineLayout pipeline_layout;
-   result = get_blit_pipeline_layout(device, meta, &pipeline_layout);
-   if (unlikely(result != VK_SUCCESS)) {
-      vk_command_buffer_set_error(cmd, result);
-      return;
-   }
-
-   uint32_t desc_count = 0;
-   VkDescriptorImageInfo image_infos[3];
-   VkWriteDescriptorSet desc_writes[3];
-
-   if (sampler != VK_NULL_HANDLE) {
-      image_infos[desc_count] = (VkDescriptorImageInfo) {
-         .sampler = sampler,
-      };
-      desc_writes[desc_count] = (VkWriteDescriptorSet) {
-         .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-         .dstBinding = BLIT_DESC_BINDING_SAMPLER,
-         .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
-         .descriptorCount = 1,
-         .pImageInfo = &image_infos[desc_count],
-      };
-      desc_count++;
-   }
-
+   VkImageView src_views[4] = { VK_NULL_HANDLE, };
    u_foreach_bit(a, src_subres.aspectMask) {
-      VkImageAspectFlagBits aspect = (1 << a);
+      const VkImageAspectFlagBits aspect = (1 << a);
+      const enum blit_desc_binding binding = aspect_to_tex_binding(aspect);
 
-      VkImageView src_view;
       const VkImageViewUsageCreateInfo src_view_usage = {
          .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO,
          .usage = VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -573,31 +603,83 @@ do_blit(struct vk_command_buffer *cmd,
          },
       };
       result = vk_meta_create_image_view(cmd, meta, &src_view_info,
-                                         &src_view);
+                                         &src_views[binding]);
+      if (unlikely(result != VK_SUCCESS)) {
+         vk_command_buffer_set_error(cmd, result);
+         return;
+      }
+   }
+
+   VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
+   if (key->use_heaps) {
+      u_foreach_bit(a, src_subres.aspectMask) {
+         const VkImageAspectFlagBits aspect = (1 << a);
+         const enum blit_desc_binding binding = aspect_to_tex_binding(aspect);
+
+         const uint32_t push_offset =
+            vk_meta_blit_push_internal_image_offset(binding);
+         meta->cmd_push_heap_image_view(cmd, meta,
+                                        VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                                        push_offset, src_views[binding]);
+      }
+   } else {
+      VkSampler sampler = VK_NULL_HANDLE;
+      if (key->resolve_mode == VK_RESOLVE_MODE_NONE) {
+         result = get_blit_sampler(device, meta, key->filter, &sampler);
+         if (unlikely(result != VK_SUCCESS)) {
+            vk_command_buffer_set_error(cmd, result);
+            return;
+         }
+      }
+
+      result = get_blit_pipeline_layout(device, meta, &pipeline_layout);
       if (unlikely(result != VK_SUCCESS)) {
          vk_command_buffer_set_error(cmd, result);
          return;
       }
 
-      assert(desc_count < ARRAY_SIZE(image_infos));
-      assert(desc_count < ARRAY_SIZE(desc_writes));
-      image_infos[desc_count] = (VkDescriptorImageInfo) {
-         .imageView = src_view,
-      };
-      desc_writes[desc_count] = (VkWriteDescriptorSet) {
-         .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-         .dstBinding = aspect_to_tex_binding(aspect),
-         .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-         .descriptorCount = 1,
-         .pImageInfo = &image_infos[desc_count],
-      };
-      desc_count++;
-   }
+      uint32_t desc_count = 0;
+      VkDescriptorImageInfo image_infos[3];
+      VkWriteDescriptorSet desc_writes[3];
 
-   disp->CmdPushDescriptorSetKHR(vk_command_buffer_to_handle(cmd),
-                                 VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                 pipeline_layout, 0,
-                                 desc_count, desc_writes);
+      if (sampler != VK_NULL_HANDLE) {
+         image_infos[desc_count] = (VkDescriptorImageInfo) {
+            .sampler = sampler,
+         };
+         desc_writes[desc_count] = (VkWriteDescriptorSet) {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstBinding = BLIT_DESC_BINDING_SAMPLER,
+            .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
+            .descriptorCount = 1,
+            .pImageInfo = &image_infos[desc_count],
+         };
+         desc_count++;
+      }
+
+      u_foreach_bit(a, src_subres.aspectMask) {
+         const VkImageAspectFlagBits aspect = (1 << a);
+         const enum blit_desc_binding binding = aspect_to_tex_binding(aspect);
+
+         assert(desc_count < ARRAY_SIZE(image_infos));
+         assert(desc_count < ARRAY_SIZE(desc_writes));
+         image_infos[desc_count] = (VkDescriptorImageInfo) {
+            .imageView = src_views[binding],
+         };
+         desc_writes[desc_count] = (VkWriteDescriptorSet) {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstBinding = binding,
+            .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+            .descriptorCount = 1,
+            .pImageInfo = &image_infos[desc_count],
+         };
+         desc_count++;
+      }
+
+      disp->CmdPushDescriptorSetKHR(vk_command_buffer_to_handle(cmd),
+                                    VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    pipeline_layout, 0,
+                                    desc_count, desc_writes);
+   }
 
    assert(dst_subres.aspectMask == src_subres.aspectMask);
    VkImageAspectFlags aspects_left = dst_subres.aspectMask;
@@ -694,10 +776,23 @@ do_blit(struct vk_command_buffer *cmd,
       if (key->stencil_as_discard) {
          for (uint32_t i = 0; i < 8; i++) {
             push->stencil_bit = BITFIELD_BIT(i);
-            disp->CmdPushConstants(vk_command_buffer_to_handle(cmd),
-                                   pipeline_layout,
-                                   VK_SHADER_STAGE_FRAGMENT_BIT,
-                                   0, sizeof(*push), push);
+            if (key->use_heaps) {
+               const VkPushDataInfoEXT push_info = {
+                  .sType = VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT,
+                  .offset = 0,
+                  .data = {
+                     .address = push,
+                     .size = sizeof(*push),
+                  },
+               };
+               disp->CmdPushDataEXT(vk_command_buffer_to_handle(cmd),
+                                    &push_info);
+            } else {
+               disp->CmdPushConstants(vk_command_buffer_to_handle(cmd),
+                                      pipeline_layout,
+                                      VK_SHADER_STAGE_FRAGMENT_BIT,
+                                      0, sizeof(*push), push);
+            }
 
             disp->CmdSetStencilWriteMask(vk_command_buffer_to_handle(cmd),
                                          VK_STENCIL_FACE_FRONT_AND_BACK,
@@ -706,10 +801,23 @@ do_blit(struct vk_command_buffer *cmd,
             meta->cmd_draw_volume(cmd, meta, dst_rect, dst_layer_count);
          }
       } else {
-         disp->CmdPushConstants(vk_command_buffer_to_handle(cmd),
-                                pipeline_layout,
-                                VK_SHADER_STAGE_FRAGMENT_BIT,
-                                0, sizeof(*push), push);
+         if (key->use_heaps) {
+            const VkPushDataInfoEXT push_info = {
+               .sType = VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT,
+               .offset = 0,
+               .data = {
+                  .address = push,
+                  .size = sizeof(*push),
+               },
+            };
+            disp->CmdPushDataEXT(vk_command_buffer_to_handle(cmd),
+                                 &push_info);
+         } else {
+            disp->CmdPushConstants(vk_command_buffer_to_handle(cmd),
+                                   pipeline_layout,
+                                   VK_SHADER_STAGE_FRAGMENT_BIT,
+                                   0, sizeof(*push), push);
+         }
 
          meta->cmd_draw_volume(cmd, meta, dst_rect, dst_layer_count);
       }
@@ -731,10 +839,12 @@ vk_meta_blit_image(struct vk_command_buffer *cmd,
                    VkImageLayout dst_image_layout,
                    uint32_t region_count,
                    const VkImageBlit2 *regions,
-                   VkFilter filter)
+                   VkFilter filter,
+                   bool use_heaps)
 {
    struct vk_meta_blit_key key;
    memset(&key, 0, sizeof(key));
+   key.use_heaps = use_heaps;
    key.key_type = VK_META_OBJECT_KEY_BLIT;
    key.filter = filter,
    key.src_samples = src_image->samples;
@@ -812,7 +922,8 @@ vk_meta_blit_image(struct vk_command_buffer *cmd,
 void
 vk_meta_blit_image2(struct vk_command_buffer *cmd,
                     struct vk_meta_device *meta,
-                    const VkBlitImageInfo2 *blit)
+                    const VkBlitImageInfo2 *blit,
+                    bool use_heaps)
 {
    VK_FROM_HANDLE(vk_image, src_image, blit->srcImage);
    VK_FROM_HANDLE(vk_image, dst_image, blit->dstImage);
@@ -820,7 +931,8 @@ vk_meta_blit_image2(struct vk_command_buffer *cmd,
    vk_meta_blit_image(cmd, meta,
                       src_image, src_image->format, blit->srcImageLayout,
                       dst_image, dst_image->format, blit->dstImageLayout,
-                      blit->regionCount, blit->pRegions, blit->filter);
+                      blit->regionCount, blit->pRegions, blit->filter,
+                      use_heaps);
 }
 
 void
@@ -835,10 +947,12 @@ vk_meta_resolve_image(struct vk_command_buffer *cmd,
                       uint32_t region_count,
                       const VkImageResolve2 *regions,
                       VkResolveModeFlagBits resolve_mode,
-                      VkResolveModeFlagBits stencil_resolve_mode)
+                      VkResolveModeFlagBits stencil_resolve_mode,
+                      bool use_heaps)
 {
    struct vk_meta_blit_key key;
    memset(&key, 0, sizeof(key));
+   key.use_heaps = use_heaps;
    key.key_type = VK_META_OBJECT_KEY_BLIT;
    key.dim = vk_image_sampler_dim(src_image);
    key.filter = VK_FILTER_NEAREST,
@@ -879,7 +993,8 @@ vk_meta_resolve_image(struct vk_command_buffer *cmd,
 void
 vk_meta_resolve_image2(struct vk_command_buffer *cmd,
                        struct vk_meta_device *meta,
-                       const VkResolveImageInfo2 *resolve)
+                       const VkResolveImageInfo2 *resolve,
+                       bool use_heaps)
 {
    VK_FROM_HANDLE(vk_image, src_image, resolve->srcImage);
    VK_FROM_HANDLE(vk_image, dst_image, resolve->dstImage);
@@ -912,7 +1027,8 @@ vk_meta_resolve_image2(struct vk_command_buffer *cmd,
                          src_image, src_format, resolve->srcImageLayout,
                          dst_image, dst_format, resolve->dstImageLayout,
                          resolve->regionCount, resolve->pRegions,
-                         resolve_mode, stencil_resolve_mode);
+                         resolve_mode, stencil_resolve_mode,
+                         use_heaps);
 }
 
 static void
@@ -927,7 +1043,7 @@ vk_meta_resolve_attachment(struct vk_command_buffer *cmd,
                            VkResolveModeFlagBits resolve_mode,
                            VkResolveModeFlagBits stencil_resolve_mode,
                            VkRect2D area, uint32_t layer_count,
-                           uint32_t view_mask)
+                           uint32_t view_mask, bool use_heaps)
 {
    VkImageResolve2 region = {
       .sType = VK_STRUCTURE_TYPE_IMAGE_RESOLVE_2,
@@ -961,7 +1077,8 @@ vk_meta_resolve_attachment(struct vk_command_buffer *cmd,
          vk_meta_resolve_image(cmd, meta,
                                src_view->image, src_format, src_image_layout,
                                dst_view->image, dst_format, dst_image_layout,
-                               1, &region, resolve_mode, stencil_resolve_mode);
+                               1, &region, resolve_mode, stencil_resolve_mode,
+                               use_heaps);
       }
    } else {
       region.srcSubresource.baseArrayLayer = src_view->base_array_layer;
@@ -972,14 +1089,16 @@ vk_meta_resolve_attachment(struct vk_command_buffer *cmd,
       vk_meta_resolve_image(cmd, meta,
                             src_view->image, src_format, src_image_layout,
                             dst_view->image, dst_format, dst_image_layout,
-                            1, &region, resolve_mode, stencil_resolve_mode);
+                            1, &region, resolve_mode, stencil_resolve_mode,
+                            use_heaps);
    }
 }
 
 void
 vk_meta_resolve_rendering(struct vk_command_buffer *cmd,
                           struct vk_meta_device *meta,
-                          const VkRenderingInfo *pRenderingInfo)
+                          const VkRenderingInfo *pRenderingInfo,
+                          bool use_heaps)
 {
    for (uint32_t c = 0; c < pRenderingInfo->colorAttachmentCount; c++) {
       const VkRenderingAttachmentInfo *att =
@@ -997,7 +1116,8 @@ vk_meta_resolve_rendering(struct vk_command_buffer *cmd,
                                  att->resolveMode, VK_RESOLVE_MODE_NONE,
                                  pRenderingInfo->renderArea,
                                  pRenderingInfo->layerCount,
-                                 pRenderingInfo->viewMask);
+                                 pRenderingInfo->viewMask,
+                                 use_heaps);
    }
 
    const VkRenderingAttachmentInfo *d_att = pRenderingInfo->pDepthAttachment;
@@ -1023,7 +1143,8 @@ vk_meta_resolve_rendering(struct vk_command_buffer *cmd,
                                     d_att->resolveMode, s_att->resolveMode,
                                     pRenderingInfo->renderArea,
                                     pRenderingInfo->layerCount,
-                                    pRenderingInfo->viewMask);
+                                    pRenderingInfo->viewMask,
+                                    use_heaps);
       } else {
          if (d_att != NULL) {
             VK_FROM_HANDLE(vk_image_view, view, d_att->imageView);
@@ -1036,7 +1157,8 @@ vk_meta_resolve_rendering(struct vk_command_buffer *cmd,
                                        d_att->resolveMode, VK_RESOLVE_MODE_NONE,
                                        pRenderingInfo->renderArea,
                                        pRenderingInfo->layerCount,
-                                       pRenderingInfo->viewMask);
+                                       pRenderingInfo->viewMask,
+                                       use_heaps);
          }
 
          if (s_att != NULL) {
@@ -1050,7 +1172,8 @@ vk_meta_resolve_rendering(struct vk_command_buffer *cmd,
                                        VK_RESOLVE_MODE_NONE, s_att->resolveMode,
                                        pRenderingInfo->renderArea,
                                        pRenderingInfo->layerCount,
-                                       pRenderingInfo->viewMask);
+                                       pRenderingInfo->viewMask,
+                                       use_heaps);
          }
       }
    }
