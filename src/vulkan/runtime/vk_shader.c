@@ -284,6 +284,7 @@ vk_shader_to_nir(struct vk_device *device,
    NIR_PASS(heaps_progress, nir, vk_nir_lower_descriptor_heaps,
             desc_map, embedded_samplers_out);
    if (heaps_progress) {
+      nir->info.use_descriptor_heap = true;
       NIR_PASS(_, nir, nir_remove_dead_variables,
                nir_var_uniform | nir_var_image, NULL);
       NIR_PASS(_, nir, nir_opt_dce);

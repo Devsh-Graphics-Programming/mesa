@@ -5361,6 +5361,10 @@ vtn_handle_preamble_instruction(struct vtn_builder *b, SpvOp opcode,
                   spirv_capability_to_string(cap));
          break;
 
+      case SpvCapabilityDescriptorHeapEXT:
+         b->shader->info.use_descriptor_heap = true;
+         break;
+
       default:
          vtn_fail_if(!spirv_capabilities_get(&implemented_capabilities, cap),
                      "Unimplemented SPIR-V capability: %s (%u)",

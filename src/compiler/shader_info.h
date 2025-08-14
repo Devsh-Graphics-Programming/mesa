@@ -338,7 +338,12 @@ typedef struct shader_info {
      * generate NaNs, and the only way the GPU saw one was to possibly feed it
      * in as a uniform.
      */
-   bool use_legacy_math_rules;
+   bool use_legacy_math_rules:1;
+
+   /**
+    * Whether the shader uses descriptor heaps
+    */
+   bool use_descriptor_heap:1;
 
    /*
     * Arrangement of invocations used to calculate derivatives in
