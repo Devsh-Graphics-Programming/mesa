@@ -776,6 +776,10 @@ panvk_lower_nir(struct panvk_device *dev, nir_shader *nir,
                 const struct pan_compile_inputs *compile_input,
                 struct panvk_shader_variant *shader)
 {
+   /* Bail out early if IOs are already lowered. */
+   if (nir->info.io_lowered)
+      return;
+
    struct panvk_instance *instance =
       to_panvk_instance(dev->vk.physical->instance);
    mesa_shader_stage stage = nir->info.stage;
@@ -968,6 +972,7 @@ panvk_lower_nir(struct panvk_device *dev, nir_shader *nir,
             nir_metadata_control_flow, &lower_sysvals_ctx);
 
    lower_load_push_consts(nir, shader);
+   nir->info.io_lowered = true;
 }
 
 static VkResult
@@ -981,6 +986,10 @@ panvk_compile_nir(struct panvk_device *dev, nir_shader *nir,
 
    struct util_dynarray binary;
    util_dynarray_init(&binary, NULL);
+
+   /* IO should have been lowered by now */
+   assert(nir->info.io_lowered);
+
    pan_shader_compile(nir, compile_input, &binary, &shader->info);
 
    /* Propagate potential additional FAU values into the panvk info struct. */
