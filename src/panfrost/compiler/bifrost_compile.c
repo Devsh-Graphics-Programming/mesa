@@ -5912,6 +5912,45 @@ bi_lower_ldexp16(nir_builder *b, nir_alu_instr *alu, UNUSED void *data)
    return true;
 }
 
+static bool
+lower_io_high_16bit(struct nir_builder *b, nir_intrinsic_instr *intr,
+                    UNUSED void *_data)
+{
+   nir_variable_mode mode;
+   intr = nir_get_io_intrinsic(&intr->instr,
+                               nir_var_shader_in | nir_var_shader_out, &mode);
+   if (!intr)
+      return false;
+
+   nir_io_semantics sem = nir_intrinsic_io_semantics(intr);
+
+   if (!sem.high_16bits)
+      return false;
+
+   assert(nir_intrinsic_has_component(intr));
+
+   nir_intrinsic_set_component(intr, nir_intrinsic_component(intr) + 2);
+
+   sem.high_16bits = 0;
+   nir_intrinsic_set_io_semantics(intr, sem);
+   return true;
+}
+
+static bool
+bi_lower_io_high_16bit(nir_shader *shader)
+{
+   /* If progress was made, ensure that we revectorize all IO to avoid multiple
+    * partial loads */
+   if (nir_shader_intrinsics_pass(shader, lower_io_high_16bit,
+                                  nir_metadata_control_flow, NULL)) {
+      nir_lower_io_to_scalar(shader, nir_varying_var_mask(shader), NULL, NULL);
+      nir_opt_vectorize_io(shader, nir_varying_var_mask(shader), false);
+      return true;
+   }
+
+   return false;
+}
+
 void
 bifrost_preprocess_nir(nir_shader *nir, unsigned gpu_id)
 {
@@ -5989,10 +6028,15 @@ bifrost_preprocess_nir(nir_shader *nir, unsigned gpu_id)
    NIR_PASS(_, nir, nir_opt_move, move_all);
 }
 
+
+
 void
 bifrost_postprocess_nir(nir_shader *nir, unsigned gpu_id)
 {
    MESA_TRACE_FUNC();
+
+   /* Backend cannot handle high_16bit, lower it now */
+   NIR_PASS(_, nir, bi_lower_io_high_16bit);
 
    if (nir->info.stage == MESA_SHADER_FRAGMENT) {
       NIR_PASS(_, nir, nir_lower_mediump_io,
