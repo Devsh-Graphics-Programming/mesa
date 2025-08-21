@@ -373,6 +373,8 @@ enum panvk_vs_variant {
    PANVK_VS_VARIANTS,
 };
 
+#define PANVK_MAX_VARIANTS PANVK_VS_VARIANTS
+
 struct panvk_shader {
    struct vk_shader vk;
 

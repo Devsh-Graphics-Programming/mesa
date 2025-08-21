@@ -771,7 +771,6 @@ panvk_lower_nir(struct panvk_device *dev, nir_shader *nir,
                 uint32_t set_layout_count,
                 struct vk_descriptor_set_layout *const *set_layouts,
                 const struct vk_pipeline_robustness_state *rs,
-                uint32_t *noperspective_varyings,
                 const struct vk_graphics_pipeline_state *state,
                 const struct pan_compile_inputs *compile_input,
                 struct panvk_shader_variant *shader)
@@ -942,36 +941,7 @@ panvk_lower_nir(struct panvk_device *dev, nir_shader *nir,
    NIR_PASS(_, nir, nir_opt_constant_folding);
 
    pan_shader_lower_texture(nir, compile_input->gpu_id);
-   pan_shader_postprocess(nir, compile_input->gpu_id);
 
-   if (stage == MESA_SHADER_VERTEX)
-      NIR_PASS(_, nir, nir_shader_intrinsics_pass, panvk_lower_load_vs_input,
-               nir_metadata_control_flow, NULL);
-   else if (stage == MESA_SHADER_FRAGMENT)
-      NIR_PASS(_, nir, nir_shader_intrinsics_pass, panvk_lower_load_fs_input,
-               nir_metadata_control_flow, NULL);
-
-   /* since valhall, panvk_per_arch(nir_lower_descriptors) separates the
-    * driver set and the user sets, and does not need pan_lower_image_index
-    */
-   if (PAN_ARCH < 9 && stage == MESA_SHADER_VERTEX)
-      NIR_PASS(_, nir, pan_lower_image_index, MAX_VS_ATTRIBS);
-
-   if (noperspective_varyings && stage == MESA_SHADER_VERTEX) {
-      NIR_PASS(_, nir, nir_inline_sysval,
-               nir_intrinsic_load_noperspective_varyings_pan,
-               *noperspective_varyings);
-   }
-
-   struct panvk_lower_sysvals_context lower_sysvals_ctx = {
-      .shader = shader,
-      .state = state,
-   };
-
-   NIR_PASS(_, nir, nir_shader_instructions_pass, panvk_lower_sysvals,
-            nir_metadata_control_flow, &lower_sysvals_ctx);
-
-   lower_load_push_consts(nir, shader);
    nir->info.io_lowered = true;
 }
 
@@ -979,6 +949,8 @@ static VkResult
 panvk_compile_nir(struct panvk_device *dev, nir_shader *nir,
                   VkShaderCreateFlagsEXT shader_flags,
                   struct pan_compile_inputs *compile_input,
+                  const struct vk_graphics_pipeline_state *state,
+                  uint32_t *noperspective_varyings,
                   struct panvk_shader_variant *shader)
 {
    const bool dump_asm =
@@ -989,6 +961,44 @@ panvk_compile_nir(struct panvk_device *dev, nir_shader *nir,
 
    /* IO should have been lowered by now */
    assert(nir->info.io_lowered);
+
+   pan_shader_postprocess(nir, compile_input->gpu_id);
+
+   if (nir->info.stage == MESA_SHADER_VERTEX)
+      NIR_PASS(_, nir, nir_shader_intrinsics_pass, panvk_lower_load_vs_input,
+               nir_metadata_control_flow, NULL);
+   else if (nir->info.stage == MESA_SHADER_FRAGMENT)
+      NIR_PASS(_, nir, nir_shader_intrinsics_pass, panvk_lower_load_fs_input,
+               nir_metadata_control_flow, NULL);
+
+   /* Since Valhall, panvk_per_arch(nir_lower_descriptors) separates the
+    * driver set and the user sets, and does not need pan_lower_image_index
+    */
+   if (PAN_ARCH < 9 && nir->info.stage == MESA_SHADER_VERTEX)
+      NIR_PASS(_, nir, pan_lower_image_index, MAX_VS_ATTRIBS);
+
+   if (noperspective_varyings && nir->info.stage == MESA_SHADER_VERTEX) {
+      NIR_PASS(_, nir, nir_inline_sysval,
+               nir_intrinsic_load_noperspective_varyings_pan,
+               *noperspective_varyings);
+   }
+
+   struct panvk_lower_sysvals_context lower_sysvals_ctx = {
+      .shader = shader,
+      .state = state,
+   };
+
+   /* Before compilation, lower sysvals and lower push consts */
+   NIR_PASS(_, nir, nir_shader_instructions_pass, panvk_lower_sysvals,
+            nir_metadata_control_flow, &lower_sysvals_ctx);
+
+   lower_load_push_consts(nir, shader);
+
+   /* Allow the remaining FAU space to be filled with constants. */
+   compile_input->fau_consts.max_amount = 2 * (FAU_WORD_COUNT - shader->fau.total_count);
+   compile_input->fau_consts.offset = shader->fau.total_count * 2;
+   compile_input->fau_consts.values = &shader->info.fau_consts[0];
+   assert(compile_input->fau_consts.max_amount <= ARRAY_SIZE(shader->info.fau_consts));
 
    pan_shader_compile(nir, compile_input, &binary, &shader->info);
 
@@ -1314,108 +1324,51 @@ panvk_shader_destroy(struct vk_device *vk_dev, struct vk_shader *vk_shader,
 
 static const struct vk_shader_ops panvk_shader_ops;
 
+struct panvk_compile_inputs {
+   struct pan_compile_inputs compile_inputs[PANVK_MAX_VARIANTS];
+   nir_shader *nir_variants[PANVK_MAX_VARIANTS];
+};
+
 static VkResult
 panvk_compile_shader(struct panvk_device *dev,
                      struct vk_shader_compile_info *info,
+                     struct panvk_compile_inputs *inputs,
                      const struct vk_graphics_pipeline_state *state,
                      uint32_t *noperspective_varyings,
                      const VkAllocationCallbacks *pAllocator,
                      struct panvk_shader *shader)
 {
-   struct panvk_physical_device *phys_dev =
-      to_panvk_physical_device(dev->vk.physical);
-
    VkResult result = VK_SUCCESS;
 
-   /* We consume the NIR, regardless of success or failure */
-   nir_shader *nir = info->nir;
+   /* First we apply lowering for variants */
+   for (enum panvk_vs_variant v = 0; v < panvk_shader_num_variants(info->stage);
+        ++v) {
+      bool is_hw_variant = v == 0;
+      struct panvk_shader_variant *variant = &shader->variants[v];
+      nir_shader *nir = inputs->nir_variants[v];
+      struct pan_compile_inputs *input = &inputs->compile_inputs[v];
 
-   nir_variable_mode robust2_modes = 0;
-   if (info->robustness->uniform_buffers == VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS_2_EXT)
-      robust2_modes |= nir_var_mem_ubo;
-   if (info->robustness->storage_buffers == VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS_2_EXT)
-      robust2_modes |= nir_var_mem_ssbo;
-
-   struct pan_compile_inputs inputs = {
-      .gpu_id = phys_dev->kmod.props.gpu_id,
-      .gpu_variant = phys_dev->kmod.props.gpu_variant,
-      .view_mask = (state && state->rp) ? state->rp->view_mask : 0,
-      .robust2_modes = robust2_modes,
-   };
-
-   if (info->stage == MESA_SHADER_FRAGMENT && state != NULL &&
-       state->ms != NULL && state->ms->sample_shading_enable)
-      nir->info.fs.uses_sample_shading = true;
-
-   if (info->stage == MESA_SHADER_VERTEX) {
-      struct pan_compile_inputs input_variants[PANVK_VS_VARIANTS] = {0};
-      nir_shader *nir_variants[PANVK_VS_VARIANTS] = {0};
-
-      /* First we apply lowering for variants */
-      for (enum panvk_vs_variant v = 0; v < PANVK_VS_VARIANTS; ++v) {
-         struct panvk_shader_variant *variant = &shader->variants[v];
-         bool last = (v + 1) == PANVK_VS_VARIANTS;
-
-         input_variants[v] = inputs;
-
-         /* Each variant gets its own NIR. To save an extra clone, we use the
-          * original NIR for the last stage.
-          */
-         nir_variants[v] = last ? nir : nir_shader_clone(NULL, nir);
-
-         panvk_lower_nir(dev, nir, info->set_layout_count, info->set_layouts,
-                         info->robustness, noperspective_varyings, state,
-                         &inputs, variant);
-
-         /* Allow the remaining FAU space to be filled with constants. */
-         input_variants[v].fau_consts.max_amount =
-            2 * (FAU_WORD_COUNT - variant->fau.total_count);
-         input_variants[v].fau_consts.offset = variant->fau.total_count * 2;
-         input_variants[v].fau_consts.values = &variant->info.fau_consts[0];
-         assert(input_variants[v].fau_consts.max_amount <= ARRAY_SIZE(variant->info.fau_consts));
-
-         variant->own_bin = true;
-
-         result = panvk_compile_nir(dev, nir_variants[v], info->flags,
-                                    &input_variants[v], variant);
-
-         /* We need to update info.push.count because it's used to initialize the
-         * RSD in pan_shader_prepare_rsd(). */
-         variant->info.push.count = variant->fau.total_count * 2;
-
-         if (result != VK_SUCCESS)
-            return result;
-
-         result = panvk_shader_upload(dev, variant, pAllocator);
-
-         if (result != VK_SUCCESS)
-            return result;
-      }
-   } else {
-      struct panvk_shader_variant *variant =
-         (struct panvk_shader_variant *)panvk_shader_only_variant(shader);
-      variant->own_bin = true;
+      if (is_hw_variant && info->stage == MESA_SHADER_FRAGMENT &&
+          state != NULL && state->ms != NULL &&
+          state->ms->sample_shading_enable)
+         nir->info.fs.uses_sample_shading = true;
 
       panvk_lower_nir(dev, nir, info->set_layout_count, info->set_layouts,
-                      info->robustness, noperspective_varyings, state, &inputs,
-                      variant);
+                      info->robustness, state, input, variant);
 
 #if PAN_ARCH >= 9
-      if (info->stage == MESA_SHADER_FRAGMENT)
+      if (is_hw_variant && info->stage == MESA_SHADER_FRAGMENT)
          /* Use LD_VAR_BUF[_IMM] for varyings if possible. */
-         inputs.valhall.use_ld_var_buf = panvk_use_ld_var_buf(variant);
+         input->valhall.use_ld_var_buf = panvk_use_ld_var_buf(variant);
 #endif
 
-      /* Allow the remaining FAU space to be filled with constants. */
-      inputs.fau_consts.max_amount = 2 * (FAU_WORD_COUNT - variant->fau.total_count);
-      inputs.fau_consts.offset = variant->fau.total_count * 2;
-      inputs.fau_consts.values = &variant->info.fau_consts[0];
-      assert(inputs.fau_consts.max_amount <= ARRAY_SIZE(variant->info.fau_consts));
+      variant->own_bin = true;
 
-      result = panvk_compile_nir(dev, nir, info->flags, &inputs, variant);
+      result = panvk_compile_nir(dev, nir, info->flags, input, state,
+                                 noperspective_varyings, variant);
 
       /* We need to update info.push.count because it's used to initialize the
-      * RSD in pan_shader_prepare_rsd(). */
+       * RSD in pan_shader_prepare_rsd(). */
       variant->info.push.count = variant->fau.total_count * 2;
 
       if (result != VK_SUCCESS)
@@ -1480,6 +1433,8 @@ panvk_compile_shaders(struct vk_device *vk_dev, uint32_t shader_count,
                       struct vk_shader **shaders_out)
 {
    struct panvk_device *dev = to_panvk_device(vk_dev);
+   struct panvk_physical_device *phys_dev =
+      to_panvk_physical_device(dev->vk.physical);
    bool use_static_noperspective = false;
    uint32_t noperspective_varyings = 0;
    VkResult result;
@@ -1488,12 +1443,29 @@ panvk_compile_shaders(struct vk_device *vk_dev, uint32_t shader_count,
    /* Memset the output array */
    memset(shaders_out, 0, shader_count * sizeof(*shaders_out));
 
-   /* Vulkan runtime passes us shaders in stage order, so the FS will always
-    * be last if it exists. Iterate shaders in reverse order to ensure FS is
-    * processed before VS. */
+   struct panvk_compile_inputs inputs[MESA_VK_MAX_GRAPHICS_PIPELINE_STAGES];
+
+   /* Lower shaders, notably lowering I/O. This is a prerequisite for
+    * intershader optimization.
+    */
    for (i = shader_count - 1; i >= 0; i--) {
-      uint32_t *noperspective_varyings_ptr =
-         use_static_noperspective ? &noperspective_varyings : NULL;
+      struct panvk_compile_inputs *input = &inputs[i];
+      const struct vk_shader_compile_info *info = &infos[i];
+
+      nir_variable_mode robust2_modes = 0;
+      if (infos[i].robustness->uniform_buffers ==
+          VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS_2_EXT)
+         robust2_modes |= nir_var_mem_ubo;
+      if (infos[i].robustness->storage_buffers ==
+          VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS_2_EXT)
+         robust2_modes |= nir_var_mem_ssbo;
+
+      struct pan_compile_inputs pan_input = {
+         .gpu_id = phys_dev->kmod.props.gpu_id,
+         .gpu_variant = phys_dev->kmod.props.gpu_variant,
+         .view_mask = (state && state->rp) ? state->rp->view_mask : 0,
+         .robust2_modes = robust2_modes,
+      };
 
       size_t size = sizeof(struct panvk_shader) +
                     sizeof(struct panvk_shader_variant) *
@@ -1507,9 +1479,38 @@ panvk_compile_shaders(struct vk_device *vk_dev, uint32_t shader_count,
 
       shaders_out[i] = &shader->vk;
 
-      result =
-         panvk_compile_shader(dev, &infos[i], state, noperspective_varyings_ptr,
-                              pAllocator, shader);
+      for (uint32_t v = 0; v < panvk_shader_num_variants(shader->vk.stage);
+           v++) {
+         struct panvk_shader_variant *variant = &shader->variants[v];
+         bool last = (v + 1) == panvk_shader_num_variants(shader->vk.stage);
+
+         input->compile_inputs[v] = pan_input;
+
+         /* Each variant gets its own NIR. To save an extra clone, we use the
+          * original NIR for the last stage.
+          */
+         input->nir_variants[v] =
+            last ? info->nir : nir_shader_clone(NULL, info->nir);
+
+         panvk_lower_nir(dev, input->nir_variants[v], info->set_layout_count,
+                         info->set_layouts, info->robustness, state,
+                         &input->compile_inputs[v], variant);
+      }
+   }
+
+   /* Vulkan runtime passes us shaders in stage order, so the FS will always
+    * be last if it exists. Iterate shaders in reverse order to ensure FS is
+    * processed before VS. */
+   for (i = shader_count - 1; i >= 0; i--) {
+      uint32_t *noperspective_varyings_ptr =
+         use_static_noperspective ? &noperspective_varyings : NULL;
+
+      struct panvk_shader *shader =
+         container_of(shaders_out[i], struct panvk_shader, vk);
+
+      result = panvk_compile_shader(dev, &infos[i], &inputs[i], state,
+                                    noperspective_varyings_ptr, pAllocator,
+                                    shader);
 
       if (result != VK_SUCCESS)
          goto err_cleanup;
