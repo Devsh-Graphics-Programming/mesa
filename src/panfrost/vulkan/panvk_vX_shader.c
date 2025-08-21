@@ -922,11 +922,6 @@ panvk_lower_nir(struct panvk_device *dev, nir_shader *nir,
    NIR_PASS(_, nir, nir_lower_io, nir_var_shader_in | nir_var_shader_out,
             glsl_type_size, nir_lower_io_use_interpolated_input_intrinsics);
 
-   if (nir->info.stage == MESA_SHADER_VERTEX)
-      NIR_PASS(_, nir, pan_nir_lower_noperspective_vs);
-   if (nir->info.stage == MESA_SHADER_FRAGMENT)
-      NIR_PASS(_, nir, pan_nir_lower_noperspective_fs);
-
    /* nir_lower[_explicit]_io is lazy and emits mul+add chains even for
     * offsets it could figure out are constant.  Do some constant folding
     * before bifrost_nir_lower_store_component below.
@@ -987,6 +982,11 @@ panvk_compile_nir(struct panvk_device *dev, nir_shader *nir,
     */
    if (nir->info.stage == MESA_SHADER_VERTEX)
       NIR_PASS(_, nir, panvk_recompute_vs_in_io_bases);
+
+   if (nir->info.stage == MESA_SHADER_VERTEX)
+      NIR_PASS(_, nir, pan_nir_lower_noperspective_vs);
+   if (nir->info.stage == MESA_SHADER_FRAGMENT)
+      NIR_PASS(_, nir, pan_nir_lower_noperspective_fs);
 
    pan_shader_postprocess(nir, compile_input->gpu_id);
 
