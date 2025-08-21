@@ -894,18 +894,11 @@ panvk_lower_nir(struct panvk_device *dev, nir_shader *nir,
       NIR_PASS(_, nir, nir_lower_compute_system_values, NULL);
    }
 
-   if (stage == MESA_SHADER_VERTEX) {
-      /* We need the driver_location to match the vertex attribute location,
-       * so we can use the attribute layout described by
-       * vk_vertex_input_state where there are holes in the attribute locations.
+   if (stage != MESA_SHADER_VERTEX && stage != MESA_SHADER_FRAGMENT) {
+      /* Input varyings in fragment shader have been lowered early, and
+       * VS inputs are not relying on driver_location (see
+       * panvk_recompute_vs_in_io_bases()).
        */
-      nir_foreach_shader_in_variable(var, nir) {
-         assert(var->data.location >= VERT_ATTRIB_GENERIC0 &&
-                var->data.location <= VERT_ATTRIB_GENERIC15);
-         var->data.driver_location = var->data.location - VERT_ATTRIB_GENERIC0;
-      }
-   } else if (stage != MESA_SHADER_FRAGMENT) {
-      /* Input varyings in fragment shader have been lowered early. */
       nir_assign_io_var_locations(nir, nir_var_shader_in, &nir->num_inputs,
                                   stage);
    }
@@ -945,6 +938,32 @@ panvk_lower_nir(struct panvk_device *dev, nir_shader *nir,
    nir->info.io_lowered = true;
 }
 
+static bool
+panvk_recompute_vs_in_io_bases(nir_shader *nir)
+{
+   nir_function_impl *impl = nir_shader_get_entrypoint(nir);
+   bool progress = false;
+
+   nir_foreach_block_safe(block, impl) {
+      nir_foreach_instr_safe(instr, block) {
+         nir_variable_mode mode;
+         nir_intrinsic_instr *intr =
+            nir_get_io_intrinsic(instr, nir_var_shader_in, &mode);
+         if (!intr)
+            continue;
+
+         nir_io_semantics sem = nir_intrinsic_io_semantics(intr);
+         assert(sem.location >= VERT_ATTRIB_GENERIC0 &&
+                sem.location <= VERT_ATTRIB_GENERIC15);
+
+         nir_intrinsic_set_base(intr, sem.location - VERT_ATTRIB_GENERIC0);
+         progress = true;
+      }
+   }
+
+   return nir_progress(progress, impl, nir_metadata_control_flow);
+}
+
 static VkResult
 panvk_compile_nir(struct panvk_device *dev, nir_shader *nir,
                   VkShaderCreateFlagsEXT shader_flags,
@@ -961,6 +980,13 @@ panvk_compile_nir(struct panvk_device *dev, nir_shader *nir,
 
    /* IO should have been lowered by now */
    assert(nir->info.io_lowered);
+
+   /* We need the base to match the vertex attribute location,
+    * so we can use the attribute layout described by
+    * vk_vertex_input_state where there are holes in the attribute locations.
+    */
+   if (nir->info.stage == MESA_SHADER_VERTEX)
+      NIR_PASS(_, nir, panvk_recompute_vs_in_io_bases);
 
    pan_shader_postprocess(nir, compile_input->gpu_id);
 
