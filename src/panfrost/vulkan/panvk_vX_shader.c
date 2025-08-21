@@ -1320,24 +1320,15 @@ panvk_compile_shader(struct panvk_device *dev,
                      const struct vk_graphics_pipeline_state *state,
                      uint32_t *noperspective_varyings,
                      const VkAllocationCallbacks *pAllocator,
-                     struct vk_shader **shader_out)
+                     struct panvk_shader *shader)
 {
    struct panvk_physical_device *phys_dev =
       to_panvk_physical_device(dev->vk.physical);
 
-   struct panvk_shader *shader;
-   VkResult result;
+   VkResult result = VK_SUCCESS;
 
    /* We consume the NIR, regardless of success or failure */
    nir_shader *nir = info->nir;
-
-   size_t size =
-      sizeof(struct panvk_shader) + sizeof(struct panvk_shader_variant) *
-                                       panvk_shader_num_variants(info->stage);
-   shader = vk_shader_zalloc(&dev->vk, &panvk_shader_ops, info->stage,
-                             pAllocator, size);
-   if (shader == NULL)
-      return panvk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    nir_variable_mode robust2_modes = 0;
    if (info->robustness->uniform_buffers == VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS_2_EXT)
@@ -1392,17 +1383,13 @@ panvk_compile_shader(struct panvk_device *dev,
          * RSD in pan_shader_prepare_rsd(). */
          variant->info.push.count = variant->fau.total_count * 2;
 
-         if (result != VK_SUCCESS) {
-            panvk_shader_destroy(&dev->vk, &shader->vk, pAllocator);
+         if (result != VK_SUCCESS)
             return result;
-         }
 
          result = panvk_shader_upload(dev, variant, pAllocator);
 
-         if (result != VK_SUCCESS) {
-            panvk_shader_destroy(&dev->vk, &shader->vk, pAllocator);
+         if (result != VK_SUCCESS)
             return result;
-         }
       }
    } else {
       struct panvk_shader_variant *variant =
@@ -1431,20 +1418,14 @@ panvk_compile_shader(struct panvk_device *dev,
       * RSD in pan_shader_prepare_rsd(). */
       variant->info.push.count = variant->fau.total_count * 2;
 
-      if (result != VK_SUCCESS) {
-         panvk_shader_destroy(&dev->vk, &shader->vk, pAllocator);
+      if (result != VK_SUCCESS)
          return result;
-      }
 
       result = panvk_shader_upload(dev, variant, pAllocator);
 
-      if (result != VK_SUCCESS) {
-         panvk_shader_destroy(&dev->vk, &shader->vk, pAllocator);
+      if (result != VK_SUCCESS)
          return result;
-      }
    }
-
-   *shader_out = &shader->vk;
 
    return result;
 }
@@ -1504,15 +1485,31 @@ panvk_compile_shaders(struct vk_device *vk_dev, uint32_t shader_count,
    VkResult result;
    int32_t i;
 
+   /* Memset the output array */
+   memset(shaders_out, 0, shader_count * sizeof(*shaders_out));
+
    /* Vulkan runtime passes us shaders in stage order, so the FS will always
     * be last if it exists. Iterate shaders in reverse order to ensure FS is
     * processed before VS. */
    for (i = shader_count - 1; i >= 0; i--) {
       uint32_t *noperspective_varyings_ptr =
          use_static_noperspective ? &noperspective_varyings : NULL;
+
+      size_t size = sizeof(struct panvk_shader) +
+                    sizeof(struct panvk_shader_variant) *
+                       panvk_shader_num_variants(infos[i].stage);
+      struct panvk_shader *shader = vk_shader_zalloc(
+         &dev->vk, &panvk_shader_ops, infos[i].stage, pAllocator, size);
+      if (shader == NULL) {
+         result = panvk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
+         goto err_cleanup;
+      }
+
+      shaders_out[i] = &shader->vk;
+
       result =
          panvk_compile_shader(dev, &infos[i], state, noperspective_varyings_ptr,
-                              pAllocator, &shaders_out[i]);
+                              pAllocator, shader);
 
       if (result != VK_SUCCESS)
          goto err_cleanup;
@@ -1520,8 +1517,6 @@ panvk_compile_shaders(struct vk_device *vk_dev, uint32_t shader_count,
       /* If we are linking VS and FS, we can use the static interpolation
        * qualifiers from the FS in the VS. */
       if (infos[i].nir->info.stage == MESA_SHADER_FRAGMENT) {
-         struct panvk_shader *shader =
-            container_of(shaders_out[i], struct panvk_shader, vk);
          const struct panvk_shader_variant *variant =
             panvk_shader_only_variant(shader);
 
@@ -1539,9 +1534,11 @@ panvk_compile_shaders(struct vk_device *vk_dev, uint32_t shader_count,
    return VK_SUCCESS;
 
 err_cleanup:
-   /* Clean up all the shaders before this point */
-   for (int32_t j = shader_count - 1; j > i; j--)
-      panvk_shader_destroy(&dev->vk, shaders_out[j], pAllocator);
+   /* Clean up all the shaders */
+   for (int32_t j = shader_count - 1; j >= 0; j--) {
+      if (shaders_out[j] != NULL)
+         panvk_shader_destroy(&dev->vk, shaders_out[j], pAllocator);
+   }
 
    /* Clean up all the NIR from this point */
    for (int32_t j = i; j >= 0; j--)
