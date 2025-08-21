@@ -221,7 +221,9 @@ panvk_lower_load_vs_input(nir_builder *b, nir_intrinsic_instr *intrin,
       nir_get_io_offset_src(intrin)->ssa,
       .base = nir_intrinsic_base(intrin),
       .component = nir_intrinsic_component(intrin),
-      .dest_type = nir_intrinsic_dest_type(intrin));
+      .dest_type = nir_intrinsic_dest_type(intrin),
+      .io_semantics = nir_intrinsic_io_semantics(intrin),
+   );
    nir_def_replace(&intrin->def, ld_attr);
 
    return true;
