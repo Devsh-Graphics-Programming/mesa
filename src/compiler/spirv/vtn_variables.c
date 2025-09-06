@@ -1341,12 +1341,12 @@ vtn_get_builtin_location(struct vtn_builder *b,
       break;
 
    case SpvBuiltInSamplerHeapEXT:
+      vtn_assert(*mode == nir_var_uniform);
       *location = SYSTEM_VALUE_SAMPLER_HEAP_PTR;
-      set_mode_system_value(b, mode);
       break;
    case SpvBuiltInResourceHeapEXT:
+      vtn_assert(*mode == nir_var_uniform);
       *location = SYSTEM_VALUE_RESOURCE_HEAP_PTR;
-      set_mode_system_value(b, mode);
       break;
 
    default:
@@ -1792,6 +1792,13 @@ vtn_storage_class_to_mode(struct vtn_builder *b,
       nir_mode = nir_var_mem_global;
       break;
    case SpvStorageClassUniformConstant:
+      /* This can happen with descriptor heaps and it's UBO */
+      if (interface_type == NULL) {
+         mode = vtn_variable_mode_uniform;
+         nir_mode = nir_var_uniform;
+         break;
+      }
+
       /* interface_type is only NULL when OpTypeForwardPointer is used and
        * OpTypeForwardPointer can only be used for struct types, not images or
        * acceleration structures.
@@ -1799,8 +1806,7 @@ vtn_storage_class_to_mode(struct vtn_builder *b,
       if (interface_type)
          interface_type = vtn_type_without_array(interface_type);
 
-      if (interface_type &&
-          interface_type->base_type == vtn_base_type_image &&
+      if (interface_type->base_type == vtn_base_type_image &&
           glsl_type_is_image(interface_type->glsl_image)) {
          mode = vtn_variable_mode_image;
          nir_mode = nir_var_image;
@@ -2785,7 +2791,13 @@ vtn_handle_variables(struct vtn_builder *b, SpvOp opcode,
       const bool untyped = opcode == SpvOpUntypedVariableKHR;
 
       struct vtn_type *ptr_type = vtn_get_type(b, w[1]);
-      struct vtn_type *data_type = untyped ? vtn_get_type(b, w[4]) : ptr_type->pointed;
+      struct vtn_type *data_type =
+         untyped && count > 4 ? vtn_get_type(b, w[4]) : ptr_type->pointed;
+      if (data_type == NULL) {
+         data_type = vtn_zalloc(b, struct vtn_type);
+         data_type->base_type = vtn_base_type_void;
+         data_type->type = glsl_void_type();
+      }
 
       SpvStorageClass storage_class = w[3];
 

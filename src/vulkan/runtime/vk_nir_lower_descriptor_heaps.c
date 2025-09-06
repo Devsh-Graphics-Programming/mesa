@@ -497,6 +497,14 @@ deref_get_root_cast(nir_deref_instr *deref)
 }
 
 static bool
+var_is_heap_ptr(nir_variable *var)
+{
+   return var->data.mode == nir_var_uniform &&
+          (var->data.location == SYSTEM_VALUE_SAMPLER_HEAP_PTR ||
+           var->data.location == SYSTEM_VALUE_RESOURCE_HEAP_PTR);
+}
+
+static bool
 deref_cast_is_heap_ptr(nir_deref_instr *deref)
 {
    assert(deref->deref_type == nir_deref_type_cast);
@@ -907,6 +915,18 @@ try_lower_heaps_deref_access(nir_builder *b, nir_intrinsic_instr *intrin,
    }
 }
 
+static inline nir_variable *
+get_variable(const nir_deref_instr *deref)
+{
+   while (deref->deref_type != nir_deref_type_var) {
+      deref = nir_deref_instr_parent(deref);
+      if (deref == NULL)
+         return NULL;
+   }
+
+   return deref->var;
+}
+
 static bool
 lower_heaps_load_buffer_ptr(nir_builder *b, nir_intrinsic_instr *ptr_load,
                             struct heap_mapping_ctx *ctx)
@@ -914,12 +934,12 @@ lower_heaps_load_buffer_ptr(nir_builder *b, nir_intrinsic_instr *ptr_load,
    assert(ptr_load->intrinsic == nir_intrinsic_load_buffer_ptr_deref);
    nir_deref_instr *deref = nir_src_as_deref(ptr_load->src[0]);
 
-   nir_deref_instr *root_cast = deref_get_root_cast(deref);
-   if (!deref_cast_is_heap_ptr(root_cast))
+   nir_variable *var = get_variable(deref);
+   if (var == NULL || !var_is_heap_ptr(var))
       return false;
 
    /* We're building an offset.  It starts at zero */
-   b->cursor = nir_before_instr(&root_cast->instr);
+   b->cursor = nir_before_impl(b->impl);
    nir_def *heap_base_offset = nir_imm_int(b, 0);
 
    /* This moves the cursor */

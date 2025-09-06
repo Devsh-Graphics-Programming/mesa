@@ -1370,6 +1370,10 @@ vtn_type_needs_explicit_layout(struct vtn_builder *b, struct vtn_type *type,
        */
       return b->shader->info.has_transform_feedback_varyings;
 
+   case vtn_variable_mode_uniform:
+      /* These are used for descriptor heaps in Vulkan */
+      return b->options->environment == NIR_SPIRV_VULKAN;
+
    case vtn_variable_mode_ssbo:
    case vtn_variable_mode_phys_ssbo:
    case vtn_variable_mode_ubo:
