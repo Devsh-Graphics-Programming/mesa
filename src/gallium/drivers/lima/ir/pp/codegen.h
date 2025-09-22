@@ -103,22 +103,17 @@ typedef union __attribute__((__packed__)) {
    } reg;
 } ppir_codegen_field_varying;
 
-typedef enum {
-   ppir_codegen_sampler_type_generic = 0x00,
-   ppir_codegen_sampler_type_cube    = 0x1F,
-} ppir_codegen_sampler_type;
-
 typedef struct __attribute__((__packed__)) {
-   unsigned                  lod_bias     :  6;
-   unsigned                  index_offset :  6;
-   unsigned                  unknown_0    :  5; /* = 00000 */
-   bool                      explicit_lod :  1;
-   bool                      lod_bias_en  :  1;
-   unsigned                  unknown_1    :  5; /* = 00000 */
-   ppir_codegen_sampler_type type         :  5;
-   bool                      offset_en    :  1;
-   unsigned                  index        : 12;
-   unsigned                  unknown_2    : 20; /* = 0011 1001 0000 0000 0001 */
+   unsigned lod_bias          :  6;
+   unsigned index_offset      :  6;
+   unsigned unknown_0         :  5; /* = 00000 */
+   bool     explicit_lod      :  1;
+   bool     lod_bias_register :  1;
+   unsigned unknown_1         :  1; /* = 0 */
+   int      constant_lod_bias :  9;
+   bool     offset_en         :  1;
+   unsigned index             : 12;
+   unsigned unknown_2         : 20; /* = 0011 1001 0000 0000 0001 */
 } ppir_codegen_field_sampler;
 
 typedef enum {

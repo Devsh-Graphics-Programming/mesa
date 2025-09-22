@@ -614,13 +614,22 @@ static bool ppir_emit_tex(ppir_block *block, nir_instr *ni)
          node->num_src++;
          break;
       }
-      case nir_tex_src_bias:
-      case nir_tex_src_lod:
-         node->lod_bias_en = true;
-         node->explicit_lod = (instr->src[i].src_type == nir_tex_src_lod);
-         ppir_node_add_src(block->comp, &node->node, &node->src[1], &instr->src[i].src, 1);
-         node->num_src++;
-         break;
+         case nir_tex_src_lod:
+            node->explicit_lod = true;
+            FALLTHROUGH;
+         case nir_tex_src_bias:
+            // the hardware seems to be able to do "texture2D(sampler, uv, 1.23 + bias)" as well
+            if (nir_src_is_const(instr->src[i].src) && instr->sampler_dim != GLSL_SAMPLER_DIM_CUBE)
+               node->constant_lod_bias = nir_src_as_float(instr->src[i].src);
+            else {
+               node->lod_bias_register = true;
+               ppir_node_add_src(block->comp, &node->node, &node->src[1], &instr->src[i].src, 1);
+               node->num_src++;
+               // for whatever reason, the blob biases cubemaps
+               if (instr->sampler_dim == GLSL_SAMPLER_DIM_CUBE && instr->src[i].src_type == nir_tex_src_bias)
+                  node->constant_lod_bias = -1.0f;
+            }
+            break;
       default:
          ppir_error("unsupported texture source type\n");
          return false;

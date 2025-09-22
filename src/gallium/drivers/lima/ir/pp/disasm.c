@@ -281,19 +281,10 @@ print_sampler(void *code, unsigned offset, FILE *fp)
    ppir_codegen_field_sampler *sampler = code;
 
    fprintf(fp, "texld");
-   if (sampler->lod_bias_en)
+   if (sampler->lod_bias_register)
       fprintf(fp, ".b");
 
-   switch (sampler->type) {
-   case ppir_codegen_sampler_type_generic:
-      break;
-   case ppir_codegen_sampler_type_cube:
-      fprintf(fp, ".cube");
-      break;
-   default:
-      fprintf(fp, "_t%u", sampler->type);
-      break;
-   }
+   fprintf(fp, " bias%03x", sampler->constant_lod_bias & 0x1ff);
 
    fprintf(fp, " %u", sampler->index);
 
@@ -303,7 +294,7 @@ print_sampler(void *code, unsigned offset, FILE *fp)
       print_source_scalar(sampler->index_offset, NULL, false, false, fp);
    }
 
-   if (sampler->lod_bias_en)
+   if (sampler->lod_bias_register)
    {
       fprintf(fp, " ");
       print_source_scalar(sampler->lod_bias, NULL, false, false, fp);

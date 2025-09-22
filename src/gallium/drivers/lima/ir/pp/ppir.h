@@ -346,7 +346,8 @@ typedef struct {
    int num_src;
    int sampler;
    int sampler_dim;
-   bool lod_bias_en;
+   float constant_lod_bias;
+   bool lod_bias_register;
    bool explicit_lod;
 } ppir_load_texture_node;
 

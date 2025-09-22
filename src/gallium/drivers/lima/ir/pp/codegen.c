@@ -149,24 +149,12 @@ static void ppir_codegen_encode_texld(ppir_node *node, void *code)
 
    f->index = ldtex->sampler;
 
-   f->lod_bias_en = ldtex->lod_bias_en;
+   f->lod_bias_register = ldtex->lod_bias_register;
    f->explicit_lod = ldtex->explicit_lod;
-   if (ldtex->lod_bias_en)
+   if (ldtex->lod_bias_register)
       f->lod_bias = ppir_target_get_src_reg_index(&ldtex->src[1]);
 
-   switch (ldtex->sampler_dim) {
-   case GLSL_SAMPLER_DIM_2D:
-   case GLSL_SAMPLER_DIM_3D:
-   case GLSL_SAMPLER_DIM_RECT:
-   case GLSL_SAMPLER_DIM_EXTERNAL:
-      f->type = ppir_codegen_sampler_type_generic;
-      break;
-   case GLSL_SAMPLER_DIM_CUBE:
-      f->type = ppir_codegen_sampler_type_cube;
-      break;
-   default:
-      break;
-   }
+   f->constant_lod_bias = ldtex->constant_lod_bias * 16.f;
 
    f->offset_en = 0;
    f->unknown_2 = 0x39001;
