@@ -48,6 +48,8 @@
 #include "compiler/spirv/spirv_info.h"
 #include "vk_util.h"
 
+#define VULKAN_DRIVER_ID_IS_QCOM_PROPRIETARY (zink_driverid(screen)==VK_DRIVER_ID_QUALCOMM_PROPRIETARY)
+
 bool
 zink_lower_cubemap_to_array(nir_shader *s, uint32_t nonseamless_cube_mask);
 
@@ -1314,6 +1316,10 @@ zink_screen_init_compiler(struct zink_screen *screen)
 
    if (!screen->info.feats.features.shaderInt64)
       screen->nir_options.lower_int64_options = ~0;
+
+   if (VULKAN_DRIVER_ID_IS_QCOM_PROPRIETARY) {
+      screen->nir_options.io_options &= ~nir_io_has_intrinsics;
+   }
 
    if (!screen->info.feats.features.shaderFloat64) {
       screen->nir_options.lower_doubles_options = ~0;
