@@ -1022,6 +1022,8 @@ vk_pipeline_precompile_shader(struct vk_device *device,
       NIR_PASS(_, nir, nir_opt_dce);
    }
 
+   NIR_PASS(_, nir, vk_nir_fixup_ubo_derefs);
+
    stage->precomp =
       vk_pipeline_precomp_shader_create(device, stage->precomp_key,
                                         sizeof(stage->precomp_key),

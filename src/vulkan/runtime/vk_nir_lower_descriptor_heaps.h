@@ -83,4 +83,6 @@ bool vk_nir_lower_descriptor_heaps(
    const VkShaderDescriptorSetAndBindingMappingInfoEXT *mapping,
    struct vk_sampler_state_array *embedded_samplers_out);
 
+bool vk_nir_fixup_ubo_derefs(nir_shader *nir);
+
 #endif

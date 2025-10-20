@@ -280,6 +280,8 @@ vk_shader_to_nir(struct vk_device *device,
       vk_find_struct_const(info->pNext,
                            SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT);
 
+   NIR_PASS(_, nir, vk_nir_fixup_ubo_derefs);
+
    bool heaps_progress = false;
    NIR_PASS(heaps_progress, nir, vk_nir_lower_descriptor_heaps,
             desc_map, embedded_samplers_out);
