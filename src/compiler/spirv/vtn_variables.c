@@ -1469,6 +1469,7 @@ apply_var_decoration(struct vtn_builder *b,
    case SpvDecorationArrayStride:
    case SpvDecorationGLSLShared:
    case SpvDecorationGLSLPacked:
+   case SpvDecorationArrayStrideIdEXT:
       break; /* These can apply to a type but we don't care about them */
 
    case SpvDecorationBinding:
@@ -3048,6 +3049,7 @@ vtn_handle_variables(struct vtn_builder *b, SpvOp opcode,
       VkSpirvResourceTypeFlagBitsEXT resource_type;
       switch (res_type->storage_class) {
       case SpvStorageClassUniform:
+      case SpvStorageClassUniformConstant:
          resource_type = VK_SPIRV_RESOURCE_TYPE_UNIFORM_BUFFER_BIT_EXT;
          break;
       case SpvStorageClassStorageBuffer:
