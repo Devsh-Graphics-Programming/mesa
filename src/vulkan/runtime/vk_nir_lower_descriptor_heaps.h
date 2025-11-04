@@ -18,9 +18,13 @@ vk_descriptor_heap_mapping(const VkShaderDescriptorSetAndBindingMappingInfoEXT *
 
    for (uint32_t i = 0; i < info->mappingCount; i++) {
       const VkDescriptorSetAndBindingMappingEXT *mapping = &info->pMappings[i];
+      const uint32_t begin_binding = mapping->firstBinding;
+      const uint32_t end_binding =
+         (mapping->firstBinding + mapping->bindingCount) < mapping->firstBinding ?
+         UINT32_MAX : (mapping->firstBinding + mapping->bindingCount - 1) ;
+
       if (mapping->descriptorSet == set &&
-          binding >= mapping->firstBinding &&
-          binding < mapping->firstBinding + mapping->bindingCount &&
+          binding >= begin_binding && binding <= end_binding &&
           mapping->resourceMask & resource_type)
          return mapping;
    }
