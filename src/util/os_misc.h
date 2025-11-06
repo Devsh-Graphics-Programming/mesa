@@ -74,6 +74,15 @@ extern "C" {
 #  define os_abort() abort()
 #endif
 
+static inline bool
+__normal_user(void)
+{
+#if defined(_WIN32)
+   return true;
+#else
+   return geteuid() == getuid() && getegid() == getgid();
+#endif
+}
 
 /*
  * Output a message. Message should preferably end in a newline.

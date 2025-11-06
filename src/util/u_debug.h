@@ -399,16 +399,6 @@ debug_get_option_ ## suffix (void) \
    return value; \
 }
 
-static inline bool
-__normal_user(void)
-{
-#if defined(_WIN32)
-   return true;
-#else
-   return geteuid() == getuid() && getegid() == getgid();
-#endif
-}
-
 #define DEBUG_GET_ONCE_BOOL_OPTION(sufix, name, dfault) \
 static bool \
 debug_get_option_ ## sufix (void) \

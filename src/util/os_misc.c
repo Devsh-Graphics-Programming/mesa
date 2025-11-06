@@ -214,12 +214,9 @@ static const char *
 os_get_option_internal(const char *name, bool use_secure_getenv)
 {
    const char *opt;
-   if (use_secure_getenv) {
-#ifdef HAVE_SECURE_GETENV
-      opt = secure_getenv(name);
-#else
-      opt = getenv(name);
-#endif
+   /* This is equavalent to calling to secure_getenv when use_secure_getenv is true */
+   if (use_secure_getenv && !__normal_user()) {
+      opt = NULL;
    } else {
       opt = getenv(name);
    }
