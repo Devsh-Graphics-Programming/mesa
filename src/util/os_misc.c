@@ -25,6 +25,10 @@
  *
  **************************************************************************/
 
+#define __STDC_WANT_LIB_EXT1__ 1 /* This define must before any include */
+
+#include <ctype.h>
+#include "c11/threads.h"
 
 #include "hash_table.h"
 #include "macros.h"
@@ -137,9 +141,51 @@ os_log_message(const char *message)
 #endif
 }
 
+struct os_get_option_value_state
+{
+   char *value;
+   size_t length;
+};
+
+static tss_t os_get_option_key;
+static bool os_get_option_key_valid = false;
+
+static void
+os_get_option_value_tls_free(void *tls_ptr)
+{
+   struct os_get_option_value_state *tls = tls_ptr;
+   if (tls)
+      free(tls->value);
+   free(tls);
+}
+
+static void
+os_get_option_value_tls_key_create_once(void)
+{
+   os_get_option_key_valid = tss_create(&os_get_option_key, os_get_option_value_tls_free) == thrd_success;
+}
+
+static char *
+os_get_option_value(size_t new_length)
+{
+   static once_flag once = ONCE_FLAG_INIT;
+   call_once(&once, os_get_option_value_tls_key_create_once);
+   if (unlikely(!os_get_option_key_valid))
+      return NULL;
+   struct os_get_option_value_state *tls = tss_get(os_get_option_key);
+   if (unlikely(!tls)) {
+      tls = calloc(1, sizeof(*tls));
+      if (!tls)
+         return NULL;
+   }
+   if (new_length > tls->length) {
+      tls->value = realloc(tls->value, new_length);
+      tls->length = new_length;
+   }
+   return tls->value;
+}
+
 #if DETECT_OS_ANDROID
-#  include <ctype.h>
-#  include "c11/threads.h"
 
 /**
  * Get an option value from android's property system, as a fallback to
@@ -164,9 +210,11 @@ os_log_message(const char *message)
 static char *
 os_get_android_option(const char *name)
 {
-   static thread_local char os_android_option_value[PROPERTY_VALUE_MAX];
+   char *os_android_option_value = os_get_option_value(PROPERTY_VALUE_MAX);
    char key[PROPERTY_KEY_MAX];
    char *p = key, *end = key + PROPERTY_KEY_MAX;
+   if (os_android_option_value = NULL)
+      return NULL;
    /* add "mesa." prefix if necessary: */
    if (strstr(name, "MESA_") != name)
       p += strlcpy(p, "mesa.", end - p);
@@ -203,8 +251,10 @@ os_get_android_option(const char *name)
 static const char *
 os_get_option_internal(const char *name, UNUSED bool use_secure_getenv)
 {
-   static thread_local char value[_MAX_ENV];
-   DWORD size = GetEnvironmentVariableA(name, value, _MAX_ENV);
+   char *value = os_get_option_value(_MAX_ENV);
+   DWORD size = 0;
+   if (value)
+      size = GetEnvironmentVariableA(name, value, _MAX_ENV);
    return (size > 0 && size < _MAX_ENV) ? value : NULL;
 }
 
@@ -218,7 +268,34 @@ os_get_option_internal(const char *name, bool use_secure_getenv)
    if (use_secure_getenv && !__normal_user()) {
       opt = NULL;
    } else {
-      opt = getenv(name);
+      opt = NULL;
+      do {
+#ifdef __STDC_LIB_EXT1__
+         size_t out_length = 0;
+         char *value = NULL;
+         size_t value_length = 128;
+         if (getenv_s(&out_length, NULL, 0, name) != 0) {
+            /* the environment variable for name does not exist */
+            break;
+         }
+         if (out_length >= value_length) {
+            value_length = (out_length + 1) * 2;
+         }
+         value = os_get_option_value(value_length);
+         if (value != NULL) {
+            if (getenv_s(&out_length, value, value_length, name) != 0) {
+               /* failed, try again */
+               continue;
+            }
+            /* getenv_s succeed */
+            opt = value;
+            break;
+         } else {
+            /* fallback to getenv */
+         }
+#endif
+         opt = getenv(name);
+      } while (0);
    }
 #if DETECT_OS_ANDROID
    if (!opt) {
