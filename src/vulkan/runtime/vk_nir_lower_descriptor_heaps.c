@@ -479,6 +479,21 @@ vk_build_descriptor_heap_address(nir_builder *b,
 }
 
 static nir_deref_instr *
+deref_get_root_image_cast(nir_deref_instr *deref)
+{
+   while (true) {
+      nir_deref_instr *parent = nir_src_as_deref(deref->parent);
+      if (!parent || parent->deref_type == nir_deref_type_var)
+         break;
+
+      deref = parent;
+   }
+   assert(deref->deref_type == nir_deref_type_cast);
+
+   return deref;
+}
+
+static nir_deref_instr *
 deref_get_root_cast(nir_deref_instr *deref)
 {
    while (true) {
@@ -670,11 +685,15 @@ build_deref_heap_offset(nir_builder *b, nir_deref_instr *deref,
       return vk_build_descriptor_heap_offset(b, mapping, resource_type,
                                              binding, index, is_sampler);
    } else {
-      nir_deref_instr *root_cast = deref_get_root_cast(deref);
+      nir_deref_instr *root_cast = deref_get_root_image_cast(deref);
       if (root_cast == NULL)
-         return false;
+         return NULL;
 
-      if (!deref_cast_is_heap_ptr(root_cast))
+      nir_variable *var = nir_deref_instr_get_variable(nir_deref_instr_parent(root_cast));
+      assert(var != NULL);
+      if (var->data.mode != nir_var_uniform ||
+          (var->data.location != SYSTEM_VALUE_SAMPLER_HEAP_PTR &&
+           var->data.location != SYSTEM_VALUE_RESOURCE_HEAP_PTR))
          return NULL;
 
       /* We're building an offset.  It starts at zero */
