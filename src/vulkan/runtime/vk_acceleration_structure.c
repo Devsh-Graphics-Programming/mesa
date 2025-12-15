@@ -1238,7 +1238,6 @@ vk_cmd_build_acceleration_structures(VkCommandBuffer commandBuffer,
       }
 
       vk_barrier_compute_w_to_compute_r(commandBuffer);
-      vk_barrier_compute_w_to_indirect_compute_r(commandBuffer);
       flushed_compute_after_init_update_scratch = true;
    }
 
