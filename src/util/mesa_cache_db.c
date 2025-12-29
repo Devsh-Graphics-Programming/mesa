@@ -21,6 +21,7 @@
 #include "crc32.h"
 #include "disk_cache.h"
 #include "hash_table.h"
+#include "log.h"
 #include "mesa-sha1.h"
 #include "mesa_cache_db.h"
 #include "os_time.h"
@@ -96,6 +97,15 @@ mesa_db_reopen_file(struct mesa_cache_db_file *db_file);
 static void
 mesa_db_close_file(struct mesa_cache_db_file *db_file);
 
+static int64_t time_msec(void)
+{
+   struct timespec ts;
+
+   clock_gettime(CLOCK_MONOTONIC, &ts);
+
+   return (ts.tv_sec * 1000000000LL + ts.tv_nsec) / 1000000;
+}
+
 static int
 mesa_db_flock(FILE *file, int op)
 {
@@ -108,6 +118,36 @@ mesa_db_flock(FILE *file, int op)
    return ret;
 }
 
+static int
+mesa_db_flock_timeout(FILE *file, int op)
+{
+   int64_t start = time_msec();
+   static int timeout_ms = 100;
+
+   while (true) {
+      if (mesa_db_flock(file, op) == 0)
+         return 0;
+
+      if (errno != EWOULDBLOCK)
+         return -1;
+
+      if (time_msec() - start >= timeout_ms)
+         break;
+
+      sched_yield();
+   }
+
+   errno = ETIME;
+
+   /* don't block for too long on next try if flock is too contended */
+   if (timeout_ms == 100) {
+      mesa_logw("failed to lock cache DB file: %s", strerror(errno));
+      timeout_ms = 10;
+   }
+
+   return -1;
+}
+
 static bool
 mesa_db_lock(struct mesa_cache_db *db)
 {
@@ -117,10 +157,10 @@ mesa_db_lock(struct mesa_cache_db *db)
        !mesa_db_reopen_file(&db->cache))
       goto close_files;
 
-   if (mesa_db_flock(db->cache.file, LOCK_EX) < 0)
+   if (mesa_db_flock_timeout(db->cache.file, LOCK_EX | LOCK_NB) < 0)
       goto close_files;
 
-   if (mesa_db_flock(db->index.file, LOCK_EX) < 0)
+   if (mesa_db_flock_timeout(db->index.file, LOCK_EX | LOCK_NB) < 0)
       goto unlock_cache;
 
    return true;
