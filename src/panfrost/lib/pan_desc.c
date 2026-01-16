@@ -1134,18 +1134,15 @@ GENX(pan_emit_fbd)(const struct pan_fb_info *fb, unsigned layer_idx,
          bool full = !fb->draw_extent.minx && !fb->draw_extent.miny &&
                      fb->draw_extent.maxx == (fb->width - 1) &&
                      fb->draw_extent.maxy == (fb->height - 1);
-         bool clean_tile_write = fb->rts[crc_rt].clear;
-
-#if PAN_ARCH >= 6
-         clean_tile_write |= pan_force_clean_write_on(
-            pan_image_view_get_color_plane(fb->rts[crc_rt].view).image,
-            fb->tile_size);
-#endif
 
          /* If the CRC was valid it stays valid, if it wasn't, we must ensure
-          * the render operation covers the full frame, and clean tiles are
-          * pushed to memory. */
-         bool new_valid = *valid | (full && clean_tile_write);
+          * the render operation covers the full frame, and we hashed all the
+          * color data.  The easiest way to detect this last case is a clear.
+          * It's also protentially true if the pre-frame shader runs as that
+          * overwrites everything.  However, the hardware tries to optimize
+          * those away so it's hard to predict precisely.
+          */
+         bool new_valid = *valid || (full && fb->rts[crc_rt].clear);
 
          cfg.crc_read_enable = *valid;
 
