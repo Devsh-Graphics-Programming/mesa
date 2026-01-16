@@ -131,7 +131,6 @@ render_state_set_color_attachment(struct panvk_cmd_buffer *cmdbuf,
 #endif
 
    fbinfo->rts[index].view = &iview->pview;
-   fbinfo->rts[index].crc_valid = &state->render.fb.crc_valid[index];
    state->render.fb.nr_samples =
       MAX2(state->render.fb.nr_samples,
            pan_image_view_get_nr_samples(&iview->pview));
@@ -373,7 +372,6 @@ panvk_per_arch(cmd_init_render_state)(struct panvk_cmd_buffer *cmdbuf,
    state->render.maybe_set_tds_provoking_vertex = NULL;
    state->render.maybe_set_fbds_provoking_vertex = NULL;
 #endif
-   memset(state->render.fb.crc_valid, 0, sizeof(state->render.fb.crc_valid));
    memset(&state->render.color_attachments, 0,
           sizeof(state->render.color_attachments));
    memset(&state->render.z_attachment, 0, sizeof(state->render.z_attachment));

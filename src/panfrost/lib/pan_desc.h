@@ -50,7 +50,6 @@ struct pan_compute_dim {
 
 struct pan_fb_color_attachment {
    const struct pan_image_view *view;
-   bool *crc_valid;
    bool clear;
    bool preload;
    bool discard;
@@ -148,6 +147,12 @@ struct pan_fb_info {
    unsigned rt_count;
    struct pan_fb_color_attachment rts[8];
    struct pan_fb_zs_attachment zs;
+
+   struct {
+      uint8_t rt;
+      bool read;
+      bool write;
+   } crc;
 
    struct {
       unsigned stride;
@@ -272,8 +277,6 @@ void GENX(pan_select_tile_size)(struct pan_fb_info *fb);
 
 void GENX(pan_emit_tls)(const struct pan_tls_info *info,
                         struct mali_local_storage_packed *out);
-
-int GENX(pan_select_crc_rt)(const struct pan_fb_info *fb, unsigned tile_size);
 
 #if PAN_ARCH >= 5
 void GENX(pan_emit_linear_color_attachment)(const struct pan_fb_info *fb,

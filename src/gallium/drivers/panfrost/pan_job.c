@@ -468,6 +468,64 @@ panfrost_batch_get_shared_memory(struct panfrost_batch *batch, unsigned size,
    return batch->shared_memory;
 }
 
+static bool
+panfrost_fb_is_full_draw(const struct pan_fb_info *fb)
+{
+   return !fb->draw_extent.minx && !fb->draw_extent.miny &&
+          fb->draw_extent.maxx == (fb->width - 1) &&
+          fb->draw_extent.maxy == (fb->height - 1);
+}
+
+static int
+panfrost_select_crc_rt(const struct pan_fb_info *fb, uint8_t crcs_valid)
+{
+   /* Disable CRC when the tile size is smaller than 16x16. In the hardware,
+    * CRC tiles are the same size as the tiles of the framebuffer. However,
+    * our code only handles 16x16 tiles. Therefore under the current
+    * implementation, we must disable CRC when 16x16 tiles are not used.
+    *
+    * This may hurt performance. However, smaller tile sizes are rare, and
+    * CRCs are more expensive at smaller tile sizes, reducing the benefit.
+    * Restricting CRC to 16x16 should work in practice.
+    */
+   if (fb->tile_size < 16 * 16)
+      return -1;
+
+#if PAN_ARCH <= 6
+   if (fb->rt_count == 1 && fb->rts[0].view && !fb->rts[0].discard &&
+       pan_image_view_has_crc(fb->rts[0].view))
+      return 0;
+
+   return -1;
+#else
+   bool best_rt_valid = false;
+   int best_rt = -1;
+
+   for (unsigned i = 0; i < fb->rt_count; i++) {
+      if (!fb->rts[i].view || fb->rts[i].discard ||
+          !pan_image_view_has_crc(fb->rts[i].view))
+         continue;
+
+      if (!renderblock_fits_in_single_pass(fb->rts[i].view, tile_size))
+         continue;
+
+      bool valid = crcs_valid & BITFIELD_BIT(i);
+      if (!panfrost_fb_is_full_draw(fb) && !valid)
+         continue;
+
+      if (best_rt < 0 || (valid && !best_rt_valid)) {
+         best_rt = i;
+         best_rt_valid = valid;
+      }
+
+      if (valid)
+         break;
+   }
+
+   return best_rt;
+#endif
+}
+
 static void
 panfrost_batch_to_fb_info(const struct panfrost_batch *batch,
                           struct pan_fb_info *fb, struct pan_image_view *rts,
@@ -506,6 +564,7 @@ panfrost_batch_to_fb_info(const struct panfrost_batch *batch,
       PIPE_SWIZZLE_Z,
       PIPE_SWIZZLE_W,
    };
+   uint8_t crcs_valid = 0;
 
    for (unsigned i = 0; i < fb->rt_count; i++) {
       const struct pipe_surface *surf = &batch->key.cbufs[i];
@@ -550,8 +609,10 @@ panfrost_batch_to_fb_info(const struct panfrost_batch *batch,
       rts[i].nr_samples =
          surf->nr_samples ?: MAX2(surf->texture->nr_samples, 1);
       memcpy(rts[i].swizzle, id_swz, sizeof(rts[i].swizzle));
-      fb->rts[i].crc_valid = &prsrc->valid.crc;
       fb->rts[i].view = &rts[i];
+
+      if (prsrc->valid.crc)
+         crcs_valid |= BITFIELD_BIT(i);
 
       /* Preload if the RT is read or updated */
       if (!(batch->clear & mask) &&
@@ -666,6 +727,39 @@ panfrost_batch_to_fb_info(const struct panfrost_batch *batch,
    }
 
    screen->vtbl.select_tile_size(fb);
+
+   int crc_rt = panfrost_select_crc_rt(fb, crcs_valid);
+   if (crc_rt >= 0) {
+      bool valid = crcs_valid & BITFIELD_BIT(crc_rt);
+
+      /* If the CRC was valid it stays valid, if it wasn't, we must ensure
+       * the render operation covers the full frame, and we hashed all the
+       * color data.  The easiest way to detect this last case is a clear.
+       * It's also protentially true if the pre-frame shader runs as that
+       * overwrites everything.  However, the hardware tries to optimize
+       * those away so it's hard to predict precisely.
+       */
+      bool new_valid = valid || (panfrost_fb_is_full_draw(fb) &&
+                                 fb->rts[crc_rt].clear);
+
+      fb->crc.rt = crc_rt;
+      fb->crc.read = valid;
+      fb->crc.write = new_valid;
+
+      /* All other RTs have invalid CRC after we've drawn.  Only this one is
+       * potentially valid now.
+       */
+      crcs_valid = new_valid ? BITFIELD_BIT(crc_rt) : 0;
+   }
+
+   for (unsigned i = 0; i < fb->rt_count; i++) {
+      const struct pipe_surface *surf = &batch->key.cbufs[i];
+      if (!surf->texture)
+         continue;
+
+      bool valid = crcs_valid & BITFIELD_BIT(crc_rt);
+      pan_resource(surf->texture)->valid.crc = valid;
+   }
 
 #if PAN_ARCH != 6
    if (fb->cbuf_allocation > fb->tile_buf_budget) {
