@@ -1203,27 +1203,7 @@ pan_preload_emit_pre_frame_dcd(struct pan_fb_preload_cache *cache,
 
    void *dcd = fb->bifrost.pre_post.dcds.cpu + (dcd_idx * pan_size(DRAW));
 
-   /* We only use crc_rt to determine whether to force writes for updating
-    * the CRCs, so use a conservative tile size (16x16).
-    */
-   int crc_rt = GENX(pan_select_crc_rt)(fb, 16 * 16);
-
-   bool always_write = false;
-
-   /* If CRC data is currently invalid and this batch will make it valid,
-    * write even clean tiles to make sure CRC data is updated. */
-   if (crc_rt >= 0) {
-      bool *valid = fb->rts[crc_rt].crc_valid;
-      bool full = !fb->draw_extent.minx && !fb->draw_extent.miny &&
-                  fb->draw_extent.maxx == (fb->width - 1) &&
-                  fb->draw_extent.maxy == (fb->height - 1);
-
-      if (full && !(*valid))
-         always_write = true;
-   }
-
-   pan_preload_emit_dcd(cache, desc_pool, fb, zs, coords, tsd, dcd,
-                        always_write);
+   pan_preload_emit_dcd(cache, desc_pool, fb, zs, coords, tsd, dcd, false);
    if (zs) {
       enum pipe_format fmt = fb->zs.view.zs
                                 ? fb->zs.view.zs->planes[0].image->props.format
@@ -1281,8 +1261,7 @@ pan_preload_emit_pre_frame_dcd(struct pan_fb_preload_cache *cache,
 #endif
    } else {
       fb->bifrost.pre_post.modes[dcd_idx] =
-         always_write ? MALI_PRE_POST_FRAME_SHADER_MODE_ALWAYS
-                      : MALI_PRE_POST_FRAME_SHADER_MODE_INTERSECT;
+         MALI_PRE_POST_FRAME_SHADER_MODE_INTERSECT;
    }
 }
 #else
