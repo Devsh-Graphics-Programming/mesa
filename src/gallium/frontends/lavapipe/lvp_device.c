@@ -198,6 +198,7 @@ static const struct vk_device_extension_table lvp_device_extensions_supported = 
    .KHR_shader_subgroup_extended_types    = true,
    .KHR_shader_subgroup_rotate            = true,
    .KHR_shader_terminate_invocation       = true,
+   .KHR_shader_untyped_pointers           = true,
    .KHR_spirv_1_4                         = true,
    .KHR_storage_buffer_storage_class      = true,
 #ifdef LVP_USE_WSI_PLATFORM
@@ -870,6 +871,9 @@ lvp_get_features(const struct lvp_physical_device *pdevice,
       /* VK_KHR_cooperative_matrix */
       .cooperativeMatrix = has_cooperative_matrix(),
       .cooperativeMatrixRobustBufferAccess = has_cooperative_matrix(),
+
+      /* VK_KHR_shader_untyped_pointers */
+      .shaderUntypedPointers = true,
    };
 }
 
