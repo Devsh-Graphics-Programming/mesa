@@ -108,8 +108,16 @@ lower_buffer_shared(nir_builder *b, nir_intrinsic_instr *instr)
                   nir_imm_int(b, b->shader->info.shared_size));
 }
 
+enum intrin_flavor {
+   INTRIN_FLAVOR_DEFAULT,
+   INTRIN_FLAVOR_BINDLESS,
+   INTRIN_FLAVOR_DEREF,
+   INTRIN_FLAVOR_HEAP,
+};
+
 static void
-lower_image(nir_builder *b, nir_intrinsic_instr *instr, bool deref)
+lower_image(nir_builder *b, nir_intrinsic_instr *instr,
+            enum intrin_flavor flavor)
 {
    enum glsl_sampler_dim dim = nir_intrinsic_image_dim(instr);
    uint32_t num_coords = nir_image_intrinsic_coord_components(instr);
@@ -124,10 +132,12 @@ lower_image(nir_builder *b, nir_intrinsic_instr *instr, bool deref)
    nir_def *size = nir_image_size(b, size_components, 32,
                                   instr->src[0].ssa, nir_imm_int(b, 0),
                                   .image_array = is_array, .image_dim = dim);
-   if (deref) {
-      nir_def_as_intrinsic(size)->intrinsic =
-         nir_intrinsic_image_deref_size;
-   }
+
+   nir_def_as_intrinsic(size)->intrinsic =
+      flavor == INTRIN_FLAVOR_BINDLESS ? nir_intrinsic_bindless_image_size :
+      flavor == INTRIN_FLAVOR_DEREF ? nir_intrinsic_image_deref_size :
+      flavor == INTRIN_FLAVOR_HEAP ? nir_intrinsic_image_heap_size :
+      nir_intrinsic_image_size;
 
    if (dim == GLSL_SAMPLER_DIM_CUBE) {
       nir_def *z = is_array ? nir_imul_imm(b, nir_channel(b, size, 2), 6)
@@ -142,10 +152,11 @@ lower_image(nir_builder *b, nir_intrinsic_instr *instr, bool deref)
       nir_def *sample = instr->src[2].ssa;
       nir_def *samples = nir_image_samples(b, 32, instr->src[0].ssa,
                                            .image_array = is_array, .image_dim = dim);
-      if (deref) {
-         nir_def_as_intrinsic(samples)->intrinsic =
-            nir_intrinsic_image_deref_samples;
-      }
+      nir_def_as_intrinsic(samples)->intrinsic =
+         flavor == INTRIN_FLAVOR_BINDLESS ? nir_intrinsic_bindless_image_samples :
+         flavor == INTRIN_FLAVOR_DEREF ? nir_intrinsic_image_deref_samples :
+         flavor == INTRIN_FLAVOR_HEAP ? nir_intrinsic_image_heap_samples :
+         nir_intrinsic_image_samples;
 
       in_bounds = nir_iand(b, in_bounds, nir_ult(b, sample, samples));
    }
@@ -173,14 +184,28 @@ lower(nir_builder *b, nir_intrinsic_instr *intr, void *_opts)
    case nir_intrinsic_image_store:
    case nir_intrinsic_image_atomic:
    case nir_intrinsic_image_atomic_swap:
-      lower_image(b, intr, false);
+      lower_image(b, intr, INTRIN_FLAVOR_DEFAULT);
+      return true;
+
+   case nir_intrinsic_bindless_image_load:
+   case nir_intrinsic_bindless_image_store:
+   case nir_intrinsic_bindless_image_atomic:
+   case nir_intrinsic_bindless_image_atomic_swap:
+      lower_image(b, intr, INTRIN_FLAVOR_BINDLESS);
       return true;
 
    case nir_intrinsic_image_deref_load:
    case nir_intrinsic_image_deref_store:
    case nir_intrinsic_image_deref_atomic:
    case nir_intrinsic_image_deref_atomic_swap:
-      lower_image(b, intr, true);
+      lower_image(b, intr, INTRIN_FLAVOR_DEREF);
+      return true;
+
+   case nir_intrinsic_image_heap_load:
+   case nir_intrinsic_image_heap_store:
+   case nir_intrinsic_image_heap_atomic:
+   case nir_intrinsic_image_heap_atomic_swap:
+      lower_image(b, intr, INTRIN_FLAVOR_HEAP);
       return true;
 
    case nir_intrinsic_load_ubo:

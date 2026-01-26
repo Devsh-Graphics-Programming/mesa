@@ -710,10 +710,13 @@ typedef struct nir_variable {
        */
       unsigned access : 9;
 
+      /* VkSpirvResourceTypeFlagBitsKHR bit index that this variable would have. */
+      unsigned resource_type : 9;
+
       /**
        * Descriptor set binding for sampler or UBO.
        */
-      unsigned descriptor_set : 5;
+      unsigned descriptor_set;
 
 #define NIR_VARIABLE_NO_INDEX ~0
 
@@ -2357,6 +2360,12 @@ typedef enum nir_tex_src_type {
     */
    nir_tex_src_sampler_handle,
 
+   /** Texture descriptor heap offset (in bytes) */
+   nir_tex_src_texture_heap_offset,
+
+   /** Sampler descriptor heap offset (in bytes) */
+   nir_tex_src_sampler_heap_offset,
+
    /** Tex src intrinsic
     *
     * This is an intrinsic used before function inlining i.e. before we know
@@ -2555,6 +2564,12 @@ typedef struct nir_tex_instr {
     * expression, or texture lookup will result in undefined values.").
     */
    bool sampler_non_uniform;
+
+   /** True if this texture instruction uses an embedded sampler.
+    *
+    * In this case, sampler_index is the index in embedded sampler table.
+    */
+   bool embedded_sampler;
 
    /** True if the offset is not dynamically uniform */
    bool offset_non_uniform;
@@ -3127,6 +3142,7 @@ typedef struct nir_binding {
    nir_variable *var;
    unsigned desc_set;
    unsigned binding;
+   unsigned resource_type;
    unsigned num_indices;
    nir_src indices[4];
    bool read_first_invocation;

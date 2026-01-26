@@ -206,7 +206,7 @@ panvk_per_arch(CmdBlitImage2)(VkCommandBuffer commandBuffer,
    struct panvk_cmd_meta_graphics_save_ctx save = {0};
 
    meta_gfx_start(cmdbuf, &save);
-   vk_meta_blit_image2(&cmdbuf->vk, &dev->meta, pBlitImageInfo);
+   vk_meta_blit_image2(&cmdbuf->vk, &dev->meta, pBlitImageInfo, false);
    meta_gfx_end(cmdbuf, &save);
 }
 
@@ -219,7 +219,7 @@ panvk_per_arch(CmdResolveImage2)(VkCommandBuffer commandBuffer,
    struct panvk_cmd_meta_graphics_save_ctx save = {0};
 
    meta_gfx_start(cmdbuf, &save);
-   vk_meta_resolve_image2(&cmdbuf->vk, &dev->meta, pResolveImageInfo);
+   vk_meta_resolve_image2(&cmdbuf->vk, &dev->meta, pResolveImageInfo, false);
    meta_gfx_end(cmdbuf, &save);
 }
 

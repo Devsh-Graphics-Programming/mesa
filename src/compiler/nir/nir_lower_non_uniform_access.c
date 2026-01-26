@@ -221,6 +221,7 @@ lower_non_uniform_tex_access(struct nu_state *state, nir_tex_instr *tex,
       case nir_tex_src_texture_offset:
       case nir_tex_src_texture_handle:
       case nir_tex_src_texture_deref:
+      case nir_tex_src_texture_heap_offset:
          if (!tex->texture_non_uniform)
             continue;
          if (!(opts->types & nir_lower_non_uniform_texture_access))
@@ -232,6 +233,7 @@ lower_non_uniform_tex_access(struct nu_state *state, nir_tex_instr *tex,
       case nir_tex_src_sampler_offset:
       case nir_tex_src_sampler_handle:
       case nir_tex_src_sampler_deref:
+      case nir_tex_src_sampler_heap_offset:
          if (!tex->sampler_non_uniform)
             continue;
          if (!(opts->types & nir_lower_non_uniform_texture_access))
@@ -407,6 +409,16 @@ nir_lower_non_uniform_access_impl(nir_function_impl *impl,
             case nir_intrinsic_image_deref_samples:
             case nir_intrinsic_image_deref_samples_identical:
             case nir_intrinsic_image_deref_fragment_mask_load_amd:
+            case nir_intrinsic_image_heap_load:
+            case nir_intrinsic_image_heap_sparse_load:
+            case nir_intrinsic_image_heap_store:
+            case nir_intrinsic_image_heap_atomic:
+            case nir_intrinsic_image_heap_atomic_swap:
+            case nir_intrinsic_image_heap_levels:
+            case nir_intrinsic_image_heap_size:
+            case nir_intrinsic_image_heap_samples:
+            case nir_intrinsic_image_heap_samples_identical:
+            case nir_intrinsic_image_heap_fragment_mask_load_amd:
                if ((options->types & nir_lower_non_uniform_image_access) &&
                    lower_non_uniform_access_intrin(&state, intrin, 0, nir_lower_non_uniform_image_access))
                   progress = true;

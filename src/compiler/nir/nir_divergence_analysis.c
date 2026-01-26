@@ -365,6 +365,8 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_load_urb_output_handle_intel:
    case nir_intrinsic_load_ray_query_global_intel:
    case nir_intrinsic_load_call_return_address_amd:
+   case nir_intrinsic_load_sampler_heap_ptr:
+   case nir_intrinsic_load_resource_heap_ptr:
       is_divergent = false;
       break;
 
@@ -646,9 +648,11 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_image_samples_identical:
    case nir_intrinsic_image_deref_samples_identical:
    case nir_intrinsic_bindless_image_samples_identical:
+   case nir_intrinsic_image_heap_samples_identical:
    case nir_intrinsic_image_fragment_mask_load_amd:
    case nir_intrinsic_image_deref_fragment_mask_load_amd:
    case nir_intrinsic_bindless_image_fragment_mask_load_amd:
+   case nir_intrinsic_image_heap_fragment_mask_load_amd:
       is_divergent = (src_divergent(instr->src[0], state) &&
                       (nir_intrinsic_access(instr) & ACCESS_NON_UNIFORM)) ||
                      src_divergent(instr->src[1], state) ||
@@ -667,9 +671,11 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_image_load:
    case nir_intrinsic_image_deref_load:
    case nir_intrinsic_bindless_image_load:
+   case nir_intrinsic_image_heap_load:
    case nir_intrinsic_image_sparse_load:
    case nir_intrinsic_image_deref_sparse_load:
    case nir_intrinsic_bindless_image_sparse_load:
+   case nir_intrinsic_image_heap_sparse_load:
       is_divergent = (src_divergent(instr->src[0], state) &&
                       (nir_intrinsic_access(instr) & ACCESS_NON_UNIFORM)) ||
                      src_divergent(instr->src[1], state) ||
@@ -727,20 +733,27 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_image_levels:
    case nir_intrinsic_image_deref_levels:
    case nir_intrinsic_bindless_image_levels:
+   case nir_intrinsic_image_heap_levels:
    case nir_intrinsic_image_samples:
    case nir_intrinsic_image_deref_samples:
    case nir_intrinsic_bindless_image_samples:
+   case nir_intrinsic_image_heap_samples:
    case nir_intrinsic_image_size:
    case nir_intrinsic_image_deref_size:
    case nir_intrinsic_bindless_image_size:
+   case nir_intrinsic_image_heap_size:
    case nir_intrinsic_image_descriptor_amd:
    case nir_intrinsic_image_deref_descriptor_amd:
+   case nir_intrinsic_image_heap_descriptor_amd:
    case nir_intrinsic_bindless_image_descriptor_amd:
    case nir_intrinsic_strict_wqm_coord_amd:
    case nir_intrinsic_copy_deref:
    case nir_intrinsic_vulkan_resource_index:
    case nir_intrinsic_vulkan_resource_reindex:
    case nir_intrinsic_load_vulkan_descriptor:
+   case nir_intrinsic_load_heap_descriptor:
+   case nir_intrinsic_load_resource_heap_data:
+   case nir_intrinsic_global_addr_to_descriptor:
    case nir_intrinsic_load_input_attachment_target_pan:
    case nir_intrinsic_load_input_attachment_conv_pan:
    case nir_intrinsic_load_converted_mem_pan:
@@ -754,6 +767,8 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_load_sample_positions_amd:
    case nir_intrinsic_image_deref_load_param_intel:
    case nir_intrinsic_image_load_raw_intel:
+   case nir_intrinsic_internal_resource_heap_offset:
+   case nir_intrinsic_load_buffer_ptr_deref:
    case nir_intrinsic_get_ubo_size:
    case nir_intrinsic_load_ssbo_address:
    case nir_intrinsic_load_global_bounded:
@@ -892,6 +907,8 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_image_atomic_swap:
    case nir_intrinsic_bindless_image_atomic:
    case nir_intrinsic_bindless_image_atomic_swap:
+   case nir_intrinsic_image_heap_atomic:
+   case nir_intrinsic_image_heap_atomic_swap:
    case nir_intrinsic_shared_atomic:
    case nir_intrinsic_shared_atomic_swap:
    case nir_intrinsic_task_payload_atomic:

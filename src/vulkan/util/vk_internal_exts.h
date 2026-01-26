@@ -147,6 +147,10 @@ static const VkPipelineCreateFlagBits2
 #define VK_SHADER_CREATE_UNALIGNED_DISPATCH_BIT_MESA               0x2000
 #define VK_SHADER_CREATE_INDEPENDENT_SETS_BIT_MESA                 0x4000
 
+/* Uses sourceData.pushDataOffset */
+#define VK_DESCRIPTOR_MAPPING_SOURCE_INTERNAL_HEAP_WITH_PUSH_DATA_MESA \
+   (VkDescriptorMappingSourceEXT)1000316000
+
 #ifdef __cplusplus
 }
 #endif

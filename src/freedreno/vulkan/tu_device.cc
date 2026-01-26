@@ -1368,7 +1368,7 @@ tu_get_properties(struct tu_physical_device *pdevice,
    props->samplerCaptureReplayDescriptorDataSize = 0;
    props->accelerationStructureCaptureReplayDescriptorDataSize = 0;
    /* Note: these sizes must match descriptor_size() */
-   props->samplerDescriptorSize = FDL6_TEX_CONST_DWORDS * 4;
+   props->EDBsamplerDescriptorSize = FDL6_TEX_CONST_DWORDS * 4;
    props->combinedImageSamplerDescriptorSize = 2 * FDL6_TEX_CONST_DWORDS * 4;
    props->sampledImageDescriptorSize = FDL6_TEX_CONST_DWORDS * 4;
    props->storageImageDescriptorSize = FDL6_TEX_CONST_DWORDS * 4;
@@ -1514,7 +1514,7 @@ tu_get_properties(struct tu_physical_device *pdevice,
    props->conservativeRasterizationPostDepthCoverage = false;
 
    /* VK_QCOM_fragment_density_map_offset */
-   props->fragmentDensityOffsetGranularity = (VkExtent2D) { 
+   props->fragmentDensityOffsetGranularity = (VkExtent2D) {
       TU_FDM_OFFSET_GRANULARITY, TU_FDM_OFFSET_GRANULARITY
    };
 

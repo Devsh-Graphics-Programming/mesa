@@ -51,6 +51,7 @@
 #if DETECT_OS_LINUX
 #include <sys/mman.h>
 #include <sys/resource.h>
+#include <sys/sysinfo.h>
 #endif
 
 #if DETECT_OS_ANDROID
@@ -198,6 +199,7 @@ static const struct vk_device_extension_table lvp_device_extensions_supported = 
    .KHR_shader_subgroup_extended_types    = true,
    .KHR_shader_subgroup_rotate            = true,
    .KHR_shader_terminate_invocation       = true,
+   .KHR_shader_untyped_pointers           = true,
    .KHR_spirv_1_4                         = true,
    .KHR_storage_buffer_storage_class      = true,
 #ifdef LVP_USE_WSI_PLATFORM
@@ -228,6 +230,7 @@ static const struct vk_device_extension_table lvp_device_extensions_supported = 
    .EXT_depth_range_unrestricted          = true,
    .EXT_dynamic_rendering_unused_attachments = true,
    .EXT_descriptor_buffer                 = true,
+   .EXT_descriptor_heap                   = true,
    .EXT_descriptor_indexing               = true,
    .EXT_device_generated_commands         = true,
    .EXT_extended_dynamic_state            = true,
@@ -672,6 +675,10 @@ lvp_get_features(const struct lvp_physical_device *pdevice,
       /* VK_EXT_extended_dynamic_state */
       .extendedDynamicState = true,
 
+      /* VK_EXT_descriptor_heap */
+      .descriptorHeap = true,
+      .descriptorHeapCaptureReplay = false,
+
       /* VK_EXT_4444_formats */
       .formatA4R4G4B4 = true,
       .formatA4B4G4R4 = true,
@@ -870,6 +877,9 @@ lvp_get_features(const struct lvp_physical_device *pdevice,
       /* VK_KHR_cooperative_matrix */
       .cooperativeMatrix = has_cooperative_matrix(),
       .cooperativeMatrixRobustBufferAccess = has_cooperative_matrix(),
+
+      /* VK_KHR_shader_untyped_pointers */
+      .shaderUntypedPointers = true,
    };
 }
 
@@ -1206,7 +1216,7 @@ lvp_get_properties(const struct lvp_physical_device *device, struct vk_propertie
       .imageViewCaptureReplayDescriptorDataSize = 0,
       .samplerCaptureReplayDescriptorDataSize = 0,
       .accelerationStructureCaptureReplayDescriptorDataSize = 0,
-      .samplerDescriptorSize = sizeof(struct lp_descriptor),
+      .EDBsamplerDescriptorSize = sizeof(struct lp_descriptor),
       .combinedImageSamplerDescriptorSize = sizeof(struct lp_descriptor),
       .sampledImageDescriptorSize = sizeof(struct lp_descriptor),
       .storageImageDescriptorSize = sizeof(struct lp_descriptor),
@@ -1225,6 +1235,26 @@ lvp_get_properties(const struct lvp_physical_device *device, struct vk_propertie
       .resourceDescriptorBufferAddressSpaceSize = UINT32_MAX,
       .samplerDescriptorBufferAddressSpaceSize = UINT32_MAX,
       .descriptorBufferAddressSpaceSize = UINT32_MAX,
+
+      /* VK_EXT_descriptor_heap */
+      .samplerHeapAlignment = alignof(struct lp_descriptor),
+      .resourceHeapAlignment = alignof(struct lp_descriptor),
+      .maxSamplerHeapSize = sizeof(struct lp_descriptor) * 4080,
+      .maxResourceHeapSize = sizeof(struct lp_descriptor) * MAX_DESCRIPTORS * 2,
+      .minSamplerHeapReservedRange = 0,
+      .minSamplerHeapReservedRangeWithEmbedded = 0,
+      .minResourceHeapReservedRange = 0,
+      .samplerDescriptorSize = sizeof(struct lp_descriptor),
+      .imageDescriptorSize = sizeof(struct lp_descriptor),
+      .bufferDescriptorSize = sizeof(struct lp_descriptor),
+      .samplerDescriptorAlignment = sizeof(struct lp_descriptor),
+      .imageDescriptorAlignment = sizeof(struct lp_descriptor),
+      .bufferDescriptorAlignment = sizeof(struct lp_descriptor),
+      .maxPushDataSize = 256,
+      .imageCaptureReplayOpaqueDataSize = 0,
+      .maxDescriptorHeapEmbeddedSamplers = (2 << 11),
+      .samplerYcbcrConversionCount = 3,
+      .sparseDescriptorHeaps = true,
 
       /* VK_EXT_graphics_pipeline_library */
       .graphicsPipelineLibraryFastLinking = VK_TRUE,
@@ -1316,6 +1346,14 @@ lvp_get_properties(const struct lvp_physical_device *device, struct vk_propertie
       /* VK_KHR_compute_shader_derivatives */
       .meshAndTaskShaderDerivatives = true,
    };
+
+#if DETECT_OS_LINUX
+   struct sysinfo si;
+   sysinfo(&si);
+   /* just let apps yolo it until they oom */
+   p->maxResourceHeapSize = MAX2(p->maxResourceHeapSize, si.totalram / 2 / sizeof(struct lp_descriptor));
+   p->maxSamplerHeapSize = MAX2(p->maxSamplerHeapSize, si.totalram / 2 / sizeof(struct lp_descriptor));
+#endif
 
    /* Vulkan 1.0 */
    strcpy(p->deviceName, device->pscreen->get_name(device->pscreen));
@@ -1913,8 +1951,12 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateDevice(
    uint32_t zero = 0;
    device->zero_buffer = pipe_buffer_create_with_data(device->queue.ctx, 0, PIPE_USAGE_IMMUTABLE, sizeof(uint32_t), &zero);
 
+   struct pipe_sampler_state null_sampler = {
+      .seamless_cube_map = 1,
+      .max_lod = 0.25,
+   };
    device->null_texture_handle = (void *)(uintptr_t)device->queue.ctx->create_texture_handle(device->queue.ctx,
-      &(struct pipe_sampler_view){ 0 }, NULL);
+      &(struct pipe_sampler_view){ 0 }, &null_sampler);
    device->null_image_handle = (void *)(uintptr_t)device->queue.ctx->create_image_handle(device->queue.ctx,
       &(struct pipe_image_view){ 0 });
 
@@ -2618,35 +2660,33 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_ResetEvent(
 }
 
 void
-lvp_sampler_init(struct lvp_device *device, struct lp_descriptor *desc, const VkSamplerCreateInfo *pCreateInfo, const struct vk_sampler *sampler)
+lvp_sampler_init(struct lvp_device *device, struct lp_descriptor *desc, const struct vk_sampler_state *vk_state)
 {
    struct pipe_sampler_state state = {0};
-   VkClearColorValue border_color =
-      vk_sampler_border_color_value(pCreateInfo, NULL);
-   STATIC_ASSERT(sizeof(state.border_color) == sizeof(border_color));
+   STATIC_ASSERT(sizeof(state.border_color) == sizeof(vk_state->border_color_value));
 
-   state.wrap_s = vk_conv_wrap_mode(pCreateInfo->addressModeU);
-   state.wrap_t = vk_conv_wrap_mode(pCreateInfo->addressModeV);
-   state.wrap_r = vk_conv_wrap_mode(pCreateInfo->addressModeW);
-   state.min_img_filter = pCreateInfo->minFilter == VK_FILTER_LINEAR ? PIPE_TEX_FILTER_LINEAR : PIPE_TEX_FILTER_NEAREST;
-   state.min_mip_filter = pCreateInfo->mipmapMode == VK_SAMPLER_MIPMAP_MODE_LINEAR ? PIPE_TEX_MIPFILTER_LINEAR : PIPE_TEX_MIPFILTER_NEAREST;
-   state.mag_img_filter = pCreateInfo->magFilter == VK_FILTER_LINEAR ? PIPE_TEX_FILTER_LINEAR : PIPE_TEX_FILTER_NEAREST;
-   state.min_lod = pCreateInfo->minLod;
-   state.max_lod = pCreateInfo->maxLod;
-   state.lod_bias = pCreateInfo->mipLodBias;
-   if (pCreateInfo->anisotropyEnable)
-      state.max_anisotropy = pCreateInfo->maxAnisotropy;
+   state.wrap_s = vk_conv_wrap_mode(vk_state->address_mode_u);
+   state.wrap_t = vk_conv_wrap_mode(vk_state->address_mode_v);
+   state.wrap_r = vk_conv_wrap_mode(vk_state->address_mode_w);
+   state.min_img_filter = vk_state->min_filter == VK_FILTER_LINEAR ? PIPE_TEX_FILTER_LINEAR : PIPE_TEX_FILTER_NEAREST;
+   state.min_mip_filter = vk_state->mipmap_mode == VK_SAMPLER_MIPMAP_MODE_LINEAR ? PIPE_TEX_MIPFILTER_LINEAR : PIPE_TEX_MIPFILTER_NEAREST;
+   state.mag_img_filter = vk_state->mag_filter == VK_FILTER_LINEAR ? PIPE_TEX_FILTER_LINEAR : PIPE_TEX_FILTER_NEAREST;
+   state.min_lod = vk_state->min_lod;
+   state.max_lod = vk_state->max_lod;
+   state.lod_bias = vk_state->mip_lod_bias;
+   if (vk_state->anisotropy_enable)
+      state.max_anisotropy = vk_state->max_anisotropy;
    else
       state.max_anisotropy = 1;
-   state.unnormalized_coords = pCreateInfo->unnormalizedCoordinates;
-   state.compare_mode = pCreateInfo->compareEnable ? PIPE_TEX_COMPARE_R_TO_TEXTURE : PIPE_TEX_COMPARE_NONE;
-   state.compare_func = pCreateInfo->compareOp;
-   state.seamless_cube_map = !(pCreateInfo->flags & VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT);
+   state.unnormalized_coords = vk_state->unnormalized_coordinates;
+   state.compare_mode = vk_state->compare_enable ? PIPE_TEX_COMPARE_R_TO_TEXTURE : PIPE_TEX_COMPARE_NONE;
+   state.compare_func = vk_state->compare_op;
+   state.seamless_cube_map = !(vk_state->flags & VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT);
    STATIC_ASSERT((unsigned)VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE == (unsigned)PIPE_TEX_REDUCTION_WEIGHTED_AVERAGE);
    STATIC_ASSERT((unsigned)VK_SAMPLER_REDUCTION_MODE_MIN == (unsigned)PIPE_TEX_REDUCTION_MIN);
    STATIC_ASSERT((unsigned)VK_SAMPLER_REDUCTION_MODE_MAX == (unsigned)PIPE_TEX_REDUCTION_MAX);
-   state.reduction_mode = (enum pipe_tex_reduction_mode)sampler->reduction_mode;
-   memcpy(&state.border_color, &border_color, sizeof(border_color));
+   state.reduction_mode = (enum pipe_tex_reduction_mode)vk_state->reduction_mode;
+   memcpy(&state.border_color, &vk_state->border_color_value, sizeof(vk_state->border_color_value));
 
    simple_mtx_lock(&device->queue.lock);
    struct lp_texture_handle *texture_handle = (void *)(uintptr_t)device->queue.ctx->create_texture_handle(device->queue.ctx, NULL, &state);
@@ -2671,7 +2711,9 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateSampler(
    if (!sampler)
       return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
-   lvp_sampler_init(device, &sampler->desc, pCreateInfo, &sampler->vk);
+   struct vk_sampler_state state;
+   vk_sampler_state_init(&state, pCreateInfo);
+   lvp_sampler_init(device, &sampler->desc, &state);
 
    *pSampler = lvp_sampler_to_handle(sampler);
 
@@ -2690,6 +2732,21 @@ VKAPI_ATTR void VKAPI_CALL lvp_DestroySampler(
       return;
 
    vk_sampler_destroy(&device->vk, pAllocator, &sampler->vk);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL lvp_RegisterCustomBorderColorEXT(
+   VkDevice                                    device,
+   const VkSamplerCustomBorderColorCreateInfoEXT* pBorderColor,
+   VkBool32                                    requestIndex,
+   uint32_t*                                   pIndex)
+{
+   return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL lvp_UnregisterCustomBorderColorEXT(
+   VkDevice                                    device,
+   uint32_t                                    index)
+{
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL lvp_CreatePrivateDataSlot(

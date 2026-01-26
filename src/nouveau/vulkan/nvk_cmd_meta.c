@@ -224,7 +224,7 @@ nvk_CmdBlitImage2(VkCommandBuffer commandBuffer,
    struct nvk_meta_save save;
    nvk_meta_begin(cmd, &save);
 
-   vk_meta_blit_image2(&cmd->vk, &dev->meta, pBlitImageInfo);
+   vk_meta_blit_image2(&cmd->vk, &dev->meta, pBlitImageInfo, false);
 
    nvk_meta_end(cmd, &save);
 }
@@ -239,7 +239,7 @@ nvk_CmdResolveImage2(VkCommandBuffer commandBuffer,
    struct nvk_meta_save save;
    nvk_meta_begin(cmd, &save);
 
-   vk_meta_resolve_image2(&cmd->vk, &dev->meta, pResolveImageInfo);
+   vk_meta_resolve_image2(&cmd->vk, &dev->meta, pResolveImageInfo, false);
 
    nvk_meta_end(cmd, &save);
 }
@@ -253,7 +253,7 @@ nvk_meta_resolve_rendering(struct nvk_cmd_buffer *cmd,
    struct nvk_meta_save save;
    nvk_meta_begin(cmd, &save);
 
-   vk_meta_resolve_rendering(&cmd->vk, &dev->meta, pRenderingInfo);
+   vk_meta_resolve_rendering(&cmd->vk, &dev->meta, pRenderingInfo, false);
 
    nvk_meta_end(cmd, &save);
 }

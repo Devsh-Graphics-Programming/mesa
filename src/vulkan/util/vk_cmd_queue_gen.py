@@ -57,6 +57,7 @@ MANUAL_COMMANDS = [
     'CmdPushDescriptorSetWithTemplate',
     'CmdPushConstants2',
     'CmdPushDescriptorSet2',
+    'CmdPushDataEXT',
 
     # VkDispatchGraphCountInfoAMDX::infos is an array of
     # VkDispatchGraphInfoAMDX, but the xml specifies that it is a

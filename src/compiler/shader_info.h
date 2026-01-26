@@ -276,6 +276,9 @@ typedef struct shader_info {
    /* Whether ARB_bindless_texture ops or variables are used */
    bool uses_bindless : 1;
 
+   /* Number of embedded samplers used by this shader */
+   bool uses_embedded_samplers : 1;
+
    /**
     * Shared memory types have explicit layout set.  Used for
     * SPV_KHR_workgroup_storage_explicit_layout.
@@ -335,7 +338,12 @@ typedef struct shader_info {
      * generate NaNs, and the only way the GPU saw one was to possibly feed it
      * in as a uniform.
      */
-   bool use_legacy_math_rules;
+   bool use_legacy_math_rules:1;
+
+   /**
+    * Whether the shader uses descriptor heaps
+    */
+   bool use_descriptor_heap:1;
 
    /*
     * Arrangement of invocations used to calculate derivatives in

@@ -231,6 +231,9 @@ index("unsigned", "offset_shift")
 # The Vulkan descriptor type for a vulkan_resource_[re]index intrinsic.
 index("unsigned", "desc_type")
 
+# The Vulkan descriptor type according to VkSpirvResourceTypeFlagsKHR.
+index("unsigned", "resource_type")
+
 # The nir_alu_type of input data to a store or conversion
 index("nir_alu_type", "src_type")
 
@@ -803,6 +806,8 @@ def image(name, src_comp=[], extra_indices=[], **kwargs):
               indices=[IMAGE_DIM, IMAGE_ARRAY, FORMAT, ACCESS, RANGE_BASE] + extra_indices, **kwargs)
     intrinsic("bindless_image_" + name, src_comp=[-1] + src_comp,
               indices=[IMAGE_DIM, IMAGE_ARRAY, FORMAT, ACCESS] + extra_indices, **kwargs)
+    intrinsic("image_heap_" + name, src_comp=[1] + src_comp,
+              indices=[IMAGE_DIM, IMAGE_ARRAY, FORMAT, ACCESS] + extra_indices, **kwargs)
 
 image("load", src_comp=[4, 1, 1], extra_indices=[DEST_TYPE], dest_comp=0, flags=[CAN_ELIMINATE])
 image("sparse_load", src_comp=[4, 1, 1], extra_indices=[DEST_TYPE], dest_comp=0, flags=[CAN_ELIMINATE])
@@ -846,7 +851,7 @@ image("fragment_mask_load_amd", src_comp=[4], dest_comp=1, bit_sizes=[32], flags
 # corresponds to the tuple (set, binding, index) and computes an index
 # corresponding to tuple (set, binding, idx + src1).
 intrinsic("vulkan_resource_index", src_comp=[1], dest_comp=0,
-          indices=[DESC_SET, BINDING, DESC_TYPE],
+          indices=[DESC_SET, BINDING, DESC_TYPE, RESOURCE_TYPE],
           flags=[CAN_ELIMINATE, CAN_REORDER])
 intrinsic("vulkan_resource_reindex", src_comp=[0, 1], dest_comp=0,
           indices=[DESC_TYPE], flags=[CAN_ELIMINATE, CAN_REORDER])
@@ -1415,6 +1420,24 @@ intrinsic("cmat_extract", src_comp=[-1, 1], dest_comp=1)
 intrinsic("cmat_insert", src_comp=[-1, 1, -1, 1])
 intrinsic("cmat_copy", src_comp=[-1, -1])
 intrinsic("cmat_transpose", src_comp=[-1, -1])
+
+# VK_KHR_descriptor_heap
+system_value("sampler_heap_ptr", 1, bit_sizes=[64])
+system_value("resource_heap_ptr", 1, bit_sizes=[64])
+# src[] = { deref }.
+load("buffer_ptr_deref", [-1], [ACCESS, RESOURCE_TYPE],
+     flags=[CAN_ELIMINATE, CAN_REORDER])
+# src[] = { offset }.
+load("heap_descriptor", [1], [RESOURCE_TYPE], [CAN_ELIMINATE, CAN_REORDER])
+# src[] = { offset }.
+load("resource_heap_data", [1], [ALIGN_MUL, ALIGN_OFFSET],
+     flags=[CAN_ELIMINATE, CAN_REORDER])
+# src[] = { addr }.
+intrinsic("global_addr_to_descriptor", src_comp=[1], dest_comp=0,
+          indices=[RESOURCE_TYPE], flags=[CAN_ELIMINATE, CAN_REORDER])
+# src[] = { pushed_index }.
+intrinsic("internal_resource_heap_offset", src_comp=[1], dest_comp=1,
+          flags=[CAN_ELIMINATE, CAN_REORDER])
 
 # Select an output vertex in a poly GS. Takes the stream-local vertex ID.
 intrinsic("select_vertex_poly", src_comp=[1], indices=[STREAM_ID])
