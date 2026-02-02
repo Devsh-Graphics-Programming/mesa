@@ -63,8 +63,13 @@ astc_emu_init_push_descriptor_set(struct anv_cmd_buffer *cmd_buffer,
 static void
 astc_emu_init_flush_denorm_shader(nir_builder *b)
 {
-   b->shader->info.workgroup_size[0] = 8;
+   //Intel Xe3 SIMD16 Architecture
+   /* Enable Workgroup for Xe3 SIMD16 Support */
+   b->shader->info.workgroup_size[0] = 16;
    b->shader->info.workgroup_size[1] = 8;
+   /* Enable subgroup operations for Xe3 */
+   //b->shader->info.subgroup_size = 16;
+
 
    const struct glsl_type *src_type =
       glsl_sampler_type(GLSL_SAMPLER_DIM_2D, false, true, GLSL_TYPE_UINT);
@@ -118,6 +123,7 @@ astc_emu_init_flush_denorm_shader(nir_builder *b)
        * where the lower 12 bits are 0xdfc for 2D LDR.
        */
       nir_def *block_mode = nir_iand_imm(b, nir_channel(b, val, 0), 0xfff);
+
       nir_push_if(b, nir_ieq_imm(b, block_mode, 0xdfc));
       {
          nir_def *color = nir_channels(b, val, 0x3 << 2);
@@ -321,8 +327,9 @@ astc_emu_flush_denorm_slice(struct anv_cmd_buffer *cmd_buffer,
    };
    anv_CmdBindDescriptorSets2KHR(cmd_buffer_, &bind_info);
 
-   /* each workgroup processes 8x8 texel blocks */
-   rect.extent.width = DIV_ROUND_UP(rect.extent.width, 8);
+   //Intel Xe3 SIMD16 Architecture
+   /* each workgroup processes 16x8 texel blocks */
+   rect.extent.width = DIV_ROUND_UP(rect.extent.width, 16);
    rect.extent.height = DIV_ROUND_UP(rect.extent.height, 8);
 
    anv_genX(device->info, CmdDispatchBase)(cmd_buffer_, 0, 0, 0,
@@ -402,9 +409,10 @@ astc_emu_decompress_slice(struct anv_cmd_buffer *cmd_buffer,
    };
    anv_CmdPushConstants2KHR(cmd_buffer_, &push_info);
 
-   /* each workgroup processes 2x2 texel blocks */
-   rect.extent.width = DIV_ROUND_UP(rect.extent.width, 2);
-   rect.extent.height = DIV_ROUND_UP(rect.extent.height, 2);
+   //Intel Xe3 SIMD16 Architecture
+   /* each workgroup processes 16x8 texel blocks */
+   rect.extent.width = DIV_ROUND_UP(rect.extent.width, 16);
+   rect.extent.height = DIV_ROUND_UP(rect.extent.height, 8);
 
    anv_genX(device->info, CmdDispatchBase)(cmd_buffer_, 0, 0, 0,
                                            rect.extent.width,
