@@ -876,6 +876,8 @@ struct tu_bin_size_params {
    enum a6xx_buffers_location buffers_location;
    enum a6xx_lrz_feedback_mask lrz_feedback_zmode_mask;
    bool force_lrz_dis;
+   bool cons_vis_in_binning;
+   bool force_bi_dir_lrz_disable;
 };
 
 template <chip CHIP>
@@ -892,7 +894,10 @@ tu6_emit_bin_size(struct tu_cs *cs,
                                  .force_lrz_write_dis = p.force_lrz_write_dis,
                                  .buffers_location = p.buffers_location,
                                  .lrz_feedback_zmode_mask = p.lrz_feedback_zmode_mask,
-                                 .force_lrz_dis = p.force_lrz_dis));
+                                 .force_lrz_dis = p.force_lrz_dis,
+                                 .cons_vis_in_binning = p.cons_vis_in_binning,
+                                 .force_bi_dir_lrz_disable = p.force_bi_dir_lrz_disable,
+                              ));
 
    tu_cs_emit_regs(cs, RB_CNTL(CHIP,
                         .binw = bin_w,
@@ -1484,7 +1489,13 @@ tu6_emit_bin_size_gmem(struct tu_cmd_buffer *cmd,
    struct tu_physical_device *phys_dev = cmd->device->physical_device;
    const struct tu_tiling_config *tiling = cmd->state.tiling;
    bool hw_binning = use_hw_binning(cmd);
-
+   enum a6xx_lrz_feedback_mask feedback_mask =
+      phys_dev->info->props.has_lrz_feedback
+                     ? (hw_binning ? LRZ_FEEDBACK_EARLY_Z_OR_EARLY_Z_LATE_Z :
+                        LRZ_FEEDBACK_EARLY_Z_LATE_Z)
+                     : LRZ_FEEDBACK_NONE;
+   if (cmd->state.pass->has_fdm && (CHIP >= A8XX))
+      feedback_mask = LRZ_FEEDBACK_NONE;
    tu6_emit_bin_size<CHIP>(
       cs, buffers_location == BUFFERS_IN_GMEM ? tiling->tile0.width : 0,
       buffers_location == BUFFERS_IN_GMEM ? tiling->tile0.height : 0,
@@ -1492,12 +1503,9 @@ tu6_emit_bin_size_gmem(struct tu_cmd_buffer *cmd,
          .render_mode = RENDERING_PASS,
          .force_lrz_write_dis = !phys_dev->info->props.has_lrz_feedback,
          .buffers_location = buffers_location,
-         .lrz_feedback_zmode_mask =
-            phys_dev->info->props.has_lrz_feedback
-               ? (hw_binning ? LRZ_FEEDBACK_EARLY_Z_OR_EARLY_Z_LATE_Z :
-                  LRZ_FEEDBACK_EARLY_Z_LATE_Z)
-               : LRZ_FEEDBACK_NONE,
+         .lrz_feedback_zmode_mask = feedback_mask,
          .force_lrz_dis = CHIP >= A7XX && disable_lrz,
+         .force_bi_dir_lrz_disable = cmd->state.pass->has_fdm,
       });
 
 }
@@ -1552,8 +1560,10 @@ tu_bin_is_scaled(struct tu_cmd_buffer *cmd, const struct tu_tile_config *tile)
 template <chip CHIP>
 static void
 tu_emit_fdm_state(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
-                  const struct tu_tile_config *tile)
+                  const struct tu_tile_config *tile,
+                  const VkOffset2D *fdm_offsets)
 {
+   const struct tu_tiling_config *tiling = cmd->state.tiling;
    unsigned views = tu_fdm_num_layers(cmd);
    unsigned layers = MAX2(cmd->state.pass->num_views,
                           cmd->state.framebuffer->layers);
@@ -1568,8 +1578,8 @@ tu_emit_fdm_state(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
       VkExtent2D frag_areas[MAX_HW_SCALED_VIEWS];
       VkOffset2D frag_offsets[MAX_HW_SCALED_VIEWS];
 
-      const uint32_t x1 = cmd->state.tiling->tile0.width * tile->pos.x;
-      const uint32_t y1 = cmd->state.tiling->tile0.height * tile->pos.y;
+      const uint32_t x1 = tiling->tile0.width * tile->pos.x;
+      const uint32_t y1 = tiling->tile0.height * tile->pos.y;
 
       for (unsigned i = 0; i < MAX_HW_SCALED_VIEWS; i++) {
          /* The HW bin offset is always per-layer, whereas if there is
@@ -1607,12 +1617,16 @@ tu_emit_fdm_state(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
                .yscale_4 = (enum a7xx_bin_scale)util_logbase2(frag_areas[4].height),
                .xscale_5 = (enum a7xx_bin_scale)util_logbase2(frag_areas[5].width),
                .yscale_5 = (enum a7xx_bin_scale)util_logbase2(frag_areas[5].height),
+               .fdm_offset_en = !!fdm_offsets,
             ))
             .add(RB_BIN_FOVEAT(CHIP,
                .binscaleen = bin_scale_en));
 
          if (CHIP >= A8XX) {
             for (unsigned i = 0; i < MAX_HW_SCALED_VIEWS; i++) {
+               VkOffset2D fdm_offset = {0, 0};
+               if (fdm_offsets && (i < views))
+                  fdm_offset = tu_bin_offset(fdm_offsets[i], tiling);
                crb.add(GRAS_BIN_FOVEAT_XY_OFFSET(CHIP, i,
                   .xoffset = frag_offsets[i].x,
                   .yoffset = frag_offsets[i].y,
@@ -1622,12 +1636,12 @@ tu_emit_fdm_state(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
                   .yoffset = frag_offsets[i].y,
                ));
                crb.add(GRAS_BIN_FOVEAT_XY_FDM_OFFSET(CHIP, i,
-                  .xoffset = frag_offsets[i].x,
-                  .yoffset = frag_offsets[i].y,
+                  .xoffset = fdm_offset.x,
+                  .yoffset = fdm_offset.y,
                ));
                crb.add(RB_BIN_FOVEAT_XY_FDM_OFFSET(CHIP, i,
-                  .xoffset = frag_offsets[i].x,
-                  .yoffset = frag_offsets[i].y,
+                  .xoffset = fdm_offset.x,
+                  .yoffset = fdm_offset.y,
                ));
             }
          } else {
@@ -1728,17 +1742,26 @@ tu6_emit_tile_select(struct tu_cmd_buffer *cmd,
            MAX_VIEWPORT_SIZE);
 
    if (bin_scale_en) {
-      /* It seems that the window scissor happens *before*
-       * GRAS_BIN_FOVEAT_OFFSET_* is applied to the fragment coordinates,
-       * unlike the window offset which happens after it is applied. This
-       * means that the window scissor cannot do its job and we have to
-       * disable it by setting it to the entire FB size (plus an extra tile
-       * size, in case GRAS_BIN_FOVEAT_OFFSET_* is not in use). With FDM it is
-       * effectively replaced by the user's scissor anyway.
-       */
-      uint32_t width = fb->width + tiling->tile0.width;
-      uint32_t height = fb->height + tiling->tile0.height;
-      tu6_emit_window_scissor<CHIP>(cs, 0, 0, width, height);
+      if (CHIP >= A8XX) {
+         /* We mostly don't need special handling, compared to non-FDM case.
+          * Other than needing to account for bin-merging.
+          */
+         uint32_t width = (x2 - x1) * tile->sysmem_extent.width;
+         uint32_t height = (y2 - y1) * tile->sysmem_extent.height;
+         tu6_emit_window_scissor<CHIP>(cs, x1, y1, x1 + width - 1, y1 + height - 1);
+      } else {
+         /* It seems that the window scissor happens *before*
+          * GRAS_BIN_FOVEAT_OFFSET_* is applied to the fragment coordinates,
+          * unlike the window offset which happens after it is applied. This
+          * means that the window scissor cannot do its job and we have to
+          * disable it by setting it to the entire FB size (plus an extra tile
+          * size, in case GRAS_BIN_FOVEAT_OFFSET_* is not in use). With FDM it is
+          * effectively replaced by the user's scissor anyway.
+          */
+         uint32_t width = fb->width + tiling->tile0.width;
+         uint32_t height = fb->height + tiling->tile0.height;
+         tu6_emit_window_scissor<CHIP>(cs, 0, 0, width, height);
+      }
    } else {
       tu6_emit_window_scissor<CHIP>(cs, x1, y1, x2 - 1, y2 - 1);
    }
@@ -1814,7 +1837,7 @@ tu6_emit_tile_select(struct tu_cmd_buffer *cmd,
       }
 
       if (cmd->device->physical_device->info->props.has_hw_bin_scaling) {
-         tu_emit_fdm_state<CHIP>(cmd, cs, tile);
+         tu_emit_fdm_state<CHIP>(cmd, cs, tile, fdm_offsets);
 
          if (bin_scale_en) {
             for (unsigned i = 0; i < MAX_HW_SCALED_VIEWS; i++) {
@@ -2598,6 +2621,13 @@ emit_vsc_overflow_test(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
    tu_cs_emit_pkt7(cs, CP_WAIT_MEM_WRITES, 0);
 }
 
+static struct tu_tile_config
+tu_calc_tile(struct tu_cmd_buffer *cmd,
+             uint32_t x, uint32_t y,
+             uint32_t pipe, uint32_t slot_mask,
+             const struct tu_image_view *fdm,
+             const VkOffset2D *fdm_offsets);
+
 template <chip CHIP>
 static void
 tu6_emit_binning_pass(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
@@ -2648,6 +2678,23 @@ tu6_emit_binning_pass(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
             bins[i] = { { 0, 0 }, { fb->width, fb->height } };
          }
       }
+
+      if (CHIP >= A8XX) {
+         const struct tu_image_view *fdm = NULL;
+
+         if (cmd->state.pass->fragment_density_map.attachment != VK_ATTACHMENT_UNUSED) {
+            fdm = cmd->state.attachments[cmd->state.pass->fragment_density_map.attachment];
+         }
+
+         /* For binning pass FDM state, the per-tile state isn't important.
+          * So just use the 0,0 tile.
+          */
+         struct tu_tile_config tile =
+            tu_calc_tile(cmd, 0, 0, 0, 1, fdm, fdm_offsets);
+         tile.visible_views = 0;
+         tu_emit_fdm_state<CHIP>(cmd, cs, &tile, fdm_offsets);
+      }
+
       util_dynarray_foreach (&cmd->fdm_bin_patchpoints,
                              struct tu_fdm_bin_patchpoint, patch) {
          if (patch->flags & TU_FDM_SKIP_BINNING)
@@ -3491,14 +3538,27 @@ tu6_tile_render_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
                                  .render_mode = BINNING_PASS,
                                  .buffers_location = BUFFERS_IN_GMEM,
                                  .lrz_feedback_zmode_mask =
-                                    phys_dev->info->props.has_lrz_feedback
+                                    phys_dev->info->props.has_lrz_feedback &&
+                                    !((CHIP >= A8XX) && cmd->state.pass->has_fdm)
                                        ? LRZ_FEEDBACK_EARLY_Z_LATE_Z
-                                       : LRZ_FEEDBACK_NONE
+                                       : LRZ_FEEDBACK_NONE,
+                                 .cons_vis_in_binning = cmd->state.pass->has_fdm,
+                                 .force_bi_dir_lrz_disable = cmd->state.pass->has_fdm,
                               });
 
       tu6_emit_render_cntl<CHIP>(cmd, cmd->state.subpass, cs, true);
 
       tu6_emit_binning_pass<CHIP>(cmd, cs, fdm_offsets, use_cb);
+
+      /* With FDM, the slice interleaving in binning pass is full resolution,
+       * which can differ from rendering pass.  Which means slices need to
+       * be able to see other slices lrz status.
+       *
+       * So we must insert an LRZ_CACHE_FLUSH.
+       */
+      if ((CHIP >= A8XX) && cmd->state.pass->has_fdm)
+         tu_emit_event_write<CHIP>(cmd, cs, FD_LRZ_FLUSH);
+
 
       /* Enable early return from CP_INDIRECT_BUFFER once the visibility stream
        * is done.  We don't enable this if there are stores in a non-final

@@ -2799,6 +2799,14 @@ tu6_emit_viewport_fdm(struct tu_cs *cs, struct tu_cmd_buffer *cmd,
       state.vp.viewport_count = cmd->state.max_fdm_layers;
    unsigned size = tu6_viewport_size<CHIP>(cmd->device, &state.vp, &state.rs);
    tu_cs_begin_sub_stream(&cmd->sub_cs, size, cs);
+   if (CHIP >= A8XX) {
+      if (state.fake_single_viewport) {
+         for (int i = 1; i < state.vp.viewport_count; i++)
+            state.vp.viewports[i] = state.vp.viewports[0];
+      }
+      tu6_emit_viewport<CHIP>(cs, &state.vp, rs);
+      return;
+   }
    tu_create_fdm_bin_patchpoint(cmd, cs, size, TU_FDM_NONE,
                                 fdm_apply_viewports<CHIP>, state);
    cmd->state.rp.shared_viewport |= !cmd->state.per_view_viewport &&
@@ -2950,6 +2958,14 @@ tu6_emit_scissor_fdm(struct tu_cs *cs, struct tu_cmd_buffer *cmd,
       state.vp.scissor_count = cmd->state.max_fdm_layers;
    unsigned size = tu6_scissor_size<CHIP>(cmd->device, &state.vp);
    tu_cs_begin_sub_stream(&cmd->sub_cs, size, cs);
+   if (CHIP >= A8XX) {
+      if (state.fake_single_viewport) {
+         for (int i = 1; i < state.vp.scissor_count; i++)
+            state.vp.scissors[i] = state.vp.scissors[0];
+      }
+      tu6_emit_scissor<CHIP>(cs, &state.vp);
+      return;
+   }
    tu_create_fdm_bin_patchpoint(cmd, cs, size, TU_FDM_NONE, fdm_apply_scissors<CHIP>,
                                 state);
 }
