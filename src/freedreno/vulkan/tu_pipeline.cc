@@ -2708,6 +2708,7 @@ tu_fdm_per_bin_offset(VkExtent2D frag_area, VkRect2D bin,
    };
 }
 
+template <chip CHIP>
 static void
 fdm_apply_viewports(struct tu_cmd_buffer *cmd, struct tu_cs *cs, void *data,
                     VkOffset2D common_bin_offset,
@@ -2774,9 +2775,10 @@ fdm_apply_viewports(struct tu_cmd_buffer *cmd, struct tu_cs *cs, void *data,
       vp.viewports[i].y = scale_y * viewport.y + offset.y;
    }
 
-   TU_CALLX(cs->device, tu6_emit_viewport)(cs, &vp, &state->rs);
+   tu6_emit_viewport<CHIP>(cs, &vp, &state->rs);
 }
 
+template <chip CHIP>
 static void
 tu6_emit_viewport_fdm(struct tu_cs *cs, struct tu_cmd_buffer *cmd,
                       const struct vk_viewport_state *vp,
@@ -2795,10 +2797,10 @@ tu6_emit_viewport_fdm(struct tu_cs *cs, struct tu_cmd_buffer *cmd,
       state.vp.viewport_count = num_views;
    else if (cmd->state.per_layer_viewport)
       state.vp.viewport_count = cmd->state.max_fdm_layers;
-   unsigned size = TU_CALLX(cmd->device, tu6_viewport_size)(cmd->device, &state.vp, &state.rs);
+   unsigned size = tu6_viewport_size<CHIP>(cmd->device, &state.vp, &state.rs);
    tu_cs_begin_sub_stream(&cmd->sub_cs, size, cs);
    tu_create_fdm_bin_patchpoint(cmd, cs, size, TU_FDM_NONE,
-                                fdm_apply_viewports, state);
+                                fdm_apply_viewports<CHIP>, state);
    cmd->state.rp.shared_viewport |= !cmd->state.per_view_viewport &&
       !cmd->state.program.per_layer_viewport;
 }
@@ -2846,6 +2848,7 @@ tu6_emit_scissor(struct tu_cs *cs, const struct vk_viewport_state *vp)
    }
 }
 
+template <chip CHIP>
 static void
 fdm_apply_scissors(struct tu_cmd_buffer *cmd, struct tu_cs *cs, void *data,
                    VkOffset2D common_bin_offset,
@@ -2925,9 +2928,10 @@ fdm_apply_scissors(struct tu_cmd_buffer *cmd, struct tu_cs *cs, void *data,
          MIN2(max.y, bin_y + scaled_height) - vp.scissors[i].offset.y;
    }
 
-   TU_CALLX(cs->device, tu6_emit_scissor)(cs, &vp);
+   tu6_emit_scissor<CHIP>(cs, &vp);
 }
 
+template <chip CHIP>
 static void
 tu6_emit_scissor_fdm(struct tu_cs *cs, struct tu_cmd_buffer *cmd,
                      const struct vk_viewport_state *vp)
@@ -2944,9 +2948,9 @@ tu6_emit_scissor_fdm(struct tu_cs *cs, struct tu_cmd_buffer *cmd,
       state.vp.scissor_count = num_views;
    else if (cmd->state.per_layer_viewport)
       state.vp.scissor_count = cmd->state.max_fdm_layers;
-   unsigned size = TU_CALLX(cmd->device, tu6_scissor_size)(cmd->device, &state.vp);
+   unsigned size = tu6_scissor_size<CHIP>(cmd->device, &state.vp);
    tu_cs_begin_sub_stream(&cmd->sub_cs, size, cs);
-   tu_create_fdm_bin_patchpoint(cmd, cs, size, TU_FDM_NONE, fdm_apply_scissors,
+   tu_create_fdm_bin_patchpoint(cmd, cs, size, TU_FDM_NONE, fdm_apply_scissors<CHIP>,
                                 state);
 }
 
@@ -4129,7 +4133,7 @@ tu_emit_draw_state(struct tu_cmd_buffer *cmd)
        !(cmd->state.pipeline_draw_states & (1u << id))) {                     \
       if (cmd->state.has_fdm || cmd->state.per_layer_viewport) {              \
          tu_cs_set_writeable(&cmd->sub_cs, true);                             \
-         tu6_emit_##name##_fdm(&cs, cmd, __VA_ARGS__);                        \
+         tu6_emit_##name##_fdm<CHIP>(&cs, cmd, __VA_ARGS__);                  \
          cmd->state.dynamic_state[id] =                                       \
             tu_cs_end_draw_state(&cmd->sub_cs, &cs);                          \
          tu_cs_set_writeable(&cmd->sub_cs, false);                            \
