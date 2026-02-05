@@ -3936,6 +3936,28 @@ tu_calc_bin_visibility(struct tu_cmd_buffer *cmd,
    }
 }
 
+static struct tu_tile_config
+tu_calc_tile(struct tu_cmd_buffer *cmd,
+             uint32_t x, uint32_t y,
+             uint32_t pipe, uint32_t slot_mask,
+             const struct tu_image_view *fdm,
+             const VkOffset2D *fdm_offsets)
+{
+   struct tu_tile_config tile = {
+      .pos = { x, y },
+      .pipe = pipe,
+      .slot_mask = slot_mask,
+      .sysmem_extent = { 1, 1 },
+      .gmem_extent = { 1, 1 },
+   };
+   tu_calc_bin_visibility(cmd, &tile, fdm_offsets);
+   if (fdm || (TU_DEBUG(FDM) && cmd->state.pass->has_fdm))
+      tu_calc_frag_area(cmd, &tile, fdm, fdm_offsets);
+   else
+      tu_identity_frag_area(cmd, &tile);
+   return tile;
+}
+
 static bool
 try_merge_tiles(struct tu_tile_config *dst, const struct tu_tile_config *src,
                 unsigned views, bool has_abs_bin_mask, bool shared_viewport)
@@ -4225,18 +4247,8 @@ tu_cmd_render_tiles(struct tu_cmd_buffer *cmd,
                else
                   tx = tile_row_i;
 
-               struct tu_tile_config tile = {
-                  .pos = { tx1 + tx, ty },
-                  .pipe = pipe,
-                  .slot_mask = 1u << (slot_row + tx),
-                  .sysmem_extent = { 1, 1 },
-                  .gmem_extent = { 1, 1 },
-               };
-               tu_calc_bin_visibility(cmd, &tile, fdm_offsets);
-               if (has_fdm)
-                  tu_calc_frag_area(cmd, &tile, fdm, fdm_offsets);
-               else
-                  tu_identity_frag_area(cmd, &tile);
+               struct tu_tile_config tile =
+                  tu_calc_tile(cmd, tx1 + tx, ty, pipe, 1u << (slot_row + tx), fdm, fdm_offsets);
 
                tu6_render_tile<CHIP>(cmd, &cmd->cs, &tile, fdm_offsets);
             }
