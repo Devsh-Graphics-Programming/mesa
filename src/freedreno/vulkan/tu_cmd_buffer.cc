@@ -1532,6 +1532,23 @@ tu7_emit_sysmem_render_begin_regs(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
    tu_cs_emit_regs(cs, RB_CLEAR_TARGET(CHIP, .clear_mode = CLEAR_MODE_SYSMEM));
 }
 
+static bool
+tu_bin_is_scaled(struct tu_cmd_buffer *cmd, const struct tu_tile_config *tile)
+{
+   unsigned views = tu_fdm_num_layers(cmd);
+
+   if (cmd->state.pass->has_fdm) {
+      for (unsigned i = 0; i < views; i++) {
+         if (tile->frag_areas[i].width != 1 ||
+             tile->frag_areas[i].height != 1) {
+            return true;
+         }
+      }
+   }
+
+   return false;
+}
+
 template <chip CHIP>
 static void
 tu6_emit_tile_select(struct tu_cmd_buffer *cmd,
@@ -1559,17 +1576,7 @@ tu6_emit_tile_select(struct tu_cmd_buffer *cmd,
    unsigned views = tu_fdm_num_layers(cmd);
    unsigned layers = MAX2(cmd->state.pass->num_views,
                           cmd->state.framebuffer->layers);
-   bool bin_is_scaled = false;
-
-   if (cmd->state.pass->has_fdm) {
-      for (unsigned i = 0; i < views; i++) {
-         if (tile->frag_areas[i].width != 1 ||
-             tile->frag_areas[i].height != 1) {
-            bin_is_scaled = true;
-            break;
-         }
-      }
-   }
+   bool bin_is_scaled = tu_bin_is_scaled(cmd, tile);
 
    bool bin_scale_en =
       cmd->device->physical_device->info->props.has_hw_bin_scaling &&
