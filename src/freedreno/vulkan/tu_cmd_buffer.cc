@@ -1561,7 +1561,7 @@ tu6_emit_tile_select(struct tu_cmd_buffer *cmd,
                           cmd->state.framebuffer->layers);
    bool bin_is_scaled = false;
 
-   if (cmd->fdm_bin_patchpoints.size != 0) {
+   if (cmd->state.pass->has_fdm) {
       for (unsigned i = 0; i < views; i++) {
          if (tile->frag_areas[i].width != 1 ||
              tile->frag_areas[i].height != 1) {
@@ -1662,7 +1662,7 @@ tu6_emit_tile_select(struct tu_cmd_buffer *cmd,
    tu_cs_emit_pkt7(cs, CP_SET_MODE, 1);
    tu_cs_emit(cs, 0x0);
 
-   if (cmd->fdm_bin_patchpoints.size != 0) {
+   if (cmd->state.pass->has_fdm || cmd->fdm_bin_patchpoints.size) {
       VkRect2D bin = {
          { x1, y1 },
          {
@@ -2562,7 +2562,7 @@ tu6_emit_binning_pass(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
     * phase.
     */
    if ((!(cmd->usage_flags & VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT) ||
-        fdm_offsets) && cmd->fdm_bin_patchpoints.size != 0) {
+        fdm_offsets) && cmd->state.pass->has_fdm) {
       unsigned num_views = tu_fdm_num_layers(cmd);
       VkExtent2D unscaled_frag_areas[num_views];
       VkRect2D bins[num_views];
