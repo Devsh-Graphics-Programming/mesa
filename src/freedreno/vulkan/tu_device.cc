@@ -291,7 +291,7 @@ get_device_extensions(const struct tu_physical_device *device,
       .EXT_external_memory_dma_buf = true,
       .EXT_filter_cubic = device->info->props.has_tex_filter_cubic,
       .EXT_fragment_density_map = true,
-      .EXT_fragment_density_map_offset = true,
+      .EXT_fragment_density_map_offset = device->info->chip < A8XX,
       .EXT_global_priority = tu_is_vk_1_1(device),
       .EXT_global_priority_query = tu_is_vk_1_1(device),
       .EXT_graphics_pipeline_library = true,
@@ -359,7 +359,7 @@ get_device_extensions(const struct tu_physical_device *device,
       .GOOGLE_user_type = true,
       .IMG_filter_cubic = device->info->props.has_tex_filter_cubic,
       .NV_compute_shader_derivatives = true,
-      .QCOM_fragment_density_map_offset = true,
+      .QCOM_fragment_density_map_offset = device->info->chip < A8XX,
       .QCOM_image_processing = device->info->props.has_image_processing,
       .QCOM_multiview_per_view_render_areas = true,
       .QCOM_multiview_per_view_viewports =
@@ -824,7 +824,7 @@ tu_get_features(struct tu_physical_device *pdevice,
    features->shaderSubgroupRotateClustered = true;
 
    /* VK_EXT_fragment_density_map_offset */
-   features->fragmentDensityMapOffset = true;
+   features->fragmentDensityMapOffset = pdevice->info->chip < A8XX;
 
    /* VK_KHR_unified_layouts */
    features->unifiedImageLayouts = true;
