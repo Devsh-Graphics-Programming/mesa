@@ -27,6 +27,7 @@
 
 #include "pipe-loader/pipe_loader.h"
 #include "git_sha1.h"
+#include "vk_common_entrypoints.h"
 #include "vk_cmd_enqueue_entrypoints.h"
 #include "vk_sampler.h"
 #include "vk_util.h"
@@ -1629,6 +1630,27 @@ lvp_device_get_cache_uuid(void *uuid)
    else
       /* release build */
       memcpy(uuid, PACKAGE_VERSION, MIN2(strlen(PACKAGE_VERSION), VK_UUID_SIZE));
+}
+
+VKAPI_ATTR void VKAPI_CALL lvp_GetPhysicalDeviceProperties(
+   VkPhysicalDevice physicalDevice,
+   VkPhysicalDeviceProperties *pProperties)
+{
+   vk_common_GetPhysicalDeviceProperties(physicalDevice, pProperties);
+}
+
+VKAPI_ATTR void VKAPI_CALL lvp_GetPhysicalDeviceProperties2(
+   VkPhysicalDevice physicalDevice,
+   VkPhysicalDeviceProperties2 *pProperties)
+{
+   vk_common_GetPhysicalDeviceProperties2(physicalDevice, pProperties);
+}
+
+VKAPI_ATTR void VKAPI_CALL lvp_GetPhysicalDeviceProperties2KHR(
+   VkPhysicalDevice physicalDevice,
+   VkPhysicalDeviceProperties2 *pProperties)
+{
+   vk_common_GetPhysicalDeviceProperties2(physicalDevice, pProperties);
 }
 
 VKAPI_ATTR void VKAPI_CALL lvp_GetPhysicalDeviceQueueFamilyProperties2(
