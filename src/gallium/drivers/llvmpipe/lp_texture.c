@@ -61,8 +61,15 @@
 #include "frontend/sw_winsys.h"
 #include "git_sha1.h"
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
 #include "drm-uapi/drm_fourcc.h"
+#elif defined(__EMSCRIPTEN__)
+#ifndef DRM_FORMAT_MOD_LINEAR
+#define DRM_FORMAT_MOD_LINEAR 0
+#endif
+#ifndef DRM_FORMAT_MOD_INVALID
+#define DRM_FORMAT_MOD_INVALID ((uint64_t)0xffffffffffffffffULL)
+#endif
 #endif
 
 #if defined(HAVE_LIBDRM) && defined(HAVE_LINUX_UDMABUF_H)

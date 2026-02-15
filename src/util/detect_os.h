@@ -91,6 +91,11 @@
 #define DETECT_OS_POSIX 1
 #endif
 
+#if defined(__EMSCRIPTEN__)
+#define DETECT_OS_EMSCRIPTEN 1
+#define DETECT_OS_POSIX 1
+#endif
+
 
 /*
  * Make sure DETECT_OS_* are always defined, so that they can be used with #if
@@ -145,6 +150,9 @@
 #endif
 #ifndef DETECT_OS_MANAGARM
 #define DETECT_OS_MANAGARM 0
+#endif
+#ifndef DETECT_OS_EMSCRIPTEN
+#define DETECT_OS_EMSCRIPTEN 0
 #endif
 
 #endif /* DETECT_OS_H */

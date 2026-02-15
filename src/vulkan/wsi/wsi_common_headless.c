@@ -31,7 +31,9 @@
 #include "wsi_common_entrypoints.h"
 #include "wsi_common_private.h"
 
+#if !defined(__EMSCRIPTEN__)
 #include "drm-uapi/drm_fourcc.h"
+#endif
 
 struct wsi_headless {
    struct wsi_interface base;
