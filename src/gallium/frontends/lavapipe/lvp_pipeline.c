@@ -31,6 +31,7 @@
 #include "util/os_time.h"
 #include "spirv/nir_spirv.h"
 #include "nir/nir_builder.h"
+#include "nir/nir_deref.h"
 #include "nir/nir_serialize.h"
 #include "nir/lvp_nir.h"
 #include "pipe/p_state.h"
@@ -373,6 +374,165 @@ compile_spirv(struct lvp_device *pdevice,
                                             &spirv_options, lvp_device_physical(pdevice)->drv_options[stage],
                                             NULL, nir);
    return result;
+}
+
+static bool
+lvp_webvulkan_extract_const_u32_from_def(nir_def *def, uint32_t *out_value)
+{
+   if (!def || !out_value)
+      return false;
+
+   if (def->num_components != 1 || def->bit_size != 32)
+      return false;
+
+   nir_instr *parent_instr = nir_def_instr(def);
+   if (!parent_instr || parent_instr->type != nir_instr_type_load_const)
+      return false;
+
+   nir_load_const_instr *load_const = nir_instr_as_load_const(parent_instr);
+   *out_value = load_const->value[0].u32;
+   return true;
+}
+
+static bool
+lvp_webvulkan_extract_store_from_ssbo(const nir_intrinsic_instr *intr,
+                                      uint32_t *out_ssbo_index,
+                                      uint32_t *out_store_offset_bytes,
+                                      uint32_t *out_store_value)
+{
+   if (intr->intrinsic != nir_intrinsic_store_ssbo)
+      return false;
+
+   if (intr->num_components != 1 || nir_intrinsic_write_mask(intr) != 0x1)
+      return false;
+
+   if (!nir_src_is_const(intr->src[1]) || !nir_src_is_const(intr->src[2]))
+      return false;
+
+   if (!lvp_webvulkan_extract_const_u32_from_def(intr->src[0].ssa, out_store_value))
+      return false;
+
+   *out_ssbo_index = nir_src_as_uint(intr->src[1]);
+   *out_store_offset_bytes = nir_src_as_uint(intr->src[2]);
+   return true;
+}
+
+static bool
+lvp_webvulkan_extract_store_from_deref(const nir_intrinsic_instr *intr,
+                                       uint32_t *out_ssbo_index,
+                                       uint32_t *out_store_offset_bytes,
+                                       uint32_t *out_store_value)
+{
+   if (intr->intrinsic != nir_intrinsic_store_deref)
+      return false;
+
+   if (intr->num_components != 1 || nir_intrinsic_write_mask(intr) != 0x1)
+      return false;
+
+   nir_deref_instr *deref = nir_src_as_deref(intr->src[0]);
+   if (!deref || !nir_deref_mode_is_in_set(deref, nir_var_mem_ssbo))
+      return false;
+
+   if (nir_deref_instr_has_indirect(deref))
+      return false;
+
+   nir_variable *var = nir_deref_instr_get_variable(deref);
+   if (!var)
+      return false;
+
+   if (!lvp_webvulkan_extract_const_u32_from_def(intr->src[1].ssa, out_store_value))
+      return false;
+
+   *out_ssbo_index = var->data.binding;
+   *out_store_offset_bytes =
+      nir_deref_instr_get_const_offset(deref, glsl_get_natural_size_align_bytes);
+   return true;
+}
+
+int
+lvp_webvulkan_extract_nir_store_pattern(const uint32_t *spirv_words,
+                                        size_t spirv_word_count,
+                                        uint32_t *out_ssbo_index,
+                                        uint32_t *out_store_offset_bytes,
+                                        uint32_t *out_store_value)
+{
+   if (!spirv_words || spirv_word_count == 0 ||
+       !out_ssbo_index || !out_store_offset_bytes || !out_store_value)
+      return -1;
+
+   const struct spirv_to_nir_options spirv_options = {
+      .environment = NIR_SPIRV_VULKAN,
+      .ubo_addr_format = nir_address_format_vec2_index_32bit_offset,
+      .ssbo_addr_format = nir_address_format_vec2_index_32bit_offset,
+      .phys_ssbo_addr_format = nir_address_format_64bit_global,
+      .push_const_addr_format = nir_address_format_logical,
+      .shared_addr_format = nir_address_format_32bit_offset,
+      .constant_addr_format = nir_address_format_64bit_global,
+      .debug_info = false,
+   };
+
+   nir_shader *nir = spirv_to_nir(spirv_words, spirv_word_count,
+                                  NULL, 0,
+                                  MESA_SHADER_COMPUTE, "main",
+                                  &spirv_options, NULL);
+   if (!nir)
+      return -2;
+
+   nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
+
+   bool found_pattern = false;
+   uint32_t ssbo_index = 0;
+   uint32_t store_offset_bytes = 0;
+   uint32_t store_value = 0;
+
+   nir_foreach_function_impl(impl, nir) {
+      nir_foreach_block(block, impl) {
+         nir_foreach_instr(instr, block) {
+            if (instr->type != nir_instr_type_intrinsic)
+               continue;
+
+            nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+            uint32_t candidate_ssbo_index = 0;
+            uint32_t candidate_store_offset_bytes = 0;
+            uint32_t candidate_store_value = 0;
+
+            bool matched =
+               lvp_webvulkan_extract_store_from_ssbo(intr,
+                                                     &candidate_ssbo_index,
+                                                     &candidate_store_offset_bytes,
+                                                     &candidate_store_value) ||
+               lvp_webvulkan_extract_store_from_deref(intr,
+                                                      &candidate_ssbo_index,
+                                                      &candidate_store_offset_bytes,
+                                                      &candidate_store_value);
+            if (!matched)
+               continue;
+
+            if (found_pattern &&
+                (ssbo_index != candidate_ssbo_index ||
+                 store_offset_bytes != candidate_store_offset_bytes ||
+                 store_value != candidate_store_value)) {
+               ralloc_free(nir);
+               return -3;
+            }
+
+            found_pattern = true;
+            ssbo_index = candidate_ssbo_index;
+            store_offset_bytes = candidate_store_offset_bytes;
+            store_value = candidate_store_value;
+         }
+      }
+   }
+
+   ralloc_free(nir);
+
+   if (!found_pattern)
+      return -4;
+
+   *out_ssbo_index = ssbo_index;
+   *out_store_offset_bytes = store_offset_bytes;
+   *out_store_value = store_value;
+   return 0;
 }
 
 static const struct vk_ycbcr_conversion_state *

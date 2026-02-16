@@ -48,13 +48,19 @@
 #include "lp_cs_tpool.h"
 #include "frontend/sw_winsys.h"
 #include "nir/nir_to_tgsi_info.h"
+#include "nir/nir_deref.h"
 #include "nir/tgsi_to_nir.h"
+#include "compiler/glsl_types.h"
 #include "util/mesa-sha1.h"
 #include "nir_serialize.h"
 
 #include "draw/draw_context.h"
 #include "draw/draw_llvm.h"
 #include "draw/draw_mesh_prim.h"
+
+#if DETECT_OS_EMSCRIPTEN
+#include <emscripten/emscripten.h>
+#endif
 
 /** Fragment shader number (for debugging) */
 static unsigned cs_no = 0;
@@ -77,6 +83,248 @@ struct lp_cs_job_info {
    void *payload;
    size_t payload_stride;
 };
+
+#if DETECT_OS_EMSCRIPTEN
+struct lp_webvulkan_nir_store_pattern {
+   uint32_t ssbo_index;
+   uint32_t store_offset_bytes;
+   uint32_t store_value;
+};
+
+static bool
+lp_webvulkan_extract_const_u32_from_def(nir_def *def, uint32_t *out_value)
+{
+   if (!def || !out_value || def->num_components != 1 || def->bit_size != 32)
+      return false;
+
+   nir_instr *parent_instr = nir_def_instr(def);
+   if (!parent_instr || parent_instr->type != nir_instr_type_load_const)
+      return false;
+
+   nir_load_const_instr *load_const = nir_instr_as_load_const(parent_instr);
+   *out_value = load_const->value[0].u32;
+   return true;
+}
+
+static bool
+lp_webvulkan_extract_nir_store_pattern(nir_shader *nir,
+                                       struct lp_webvulkan_nir_store_pattern *out_pattern)
+{
+   bool found_pattern = false;
+   struct lp_webvulkan_nir_store_pattern pattern = {0};
+
+   nir_foreach_function_impl(impl, nir) {
+      nir_foreach_block(block, impl) {
+         nir_foreach_instr(instr, block) {
+            if (instr->type != nir_instr_type_intrinsic)
+               continue;
+
+            nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+            if (intr->intrinsic != nir_intrinsic_store_ssbo &&
+                intr->intrinsic != nir_intrinsic_store_deref)
+               continue;
+
+            if (intr->num_components != 1 || nir_intrinsic_write_mask(intr) != 0x1)
+               continue;
+
+            uint32_t store_value = 0;
+            struct lp_webvulkan_nir_store_pattern candidate = {0};
+
+            if (intr->intrinsic == nir_intrinsic_store_ssbo) {
+               if (!nir_src_is_const(intr->src[1]) || !nir_src_is_const(intr->src[2]))
+                  continue;
+               if (!lp_webvulkan_extract_const_u32_from_def(intr->src[0].ssa, &store_value))
+                  continue;
+
+               candidate.ssbo_index = nir_src_as_uint(intr->src[1]);
+               candidate.store_offset_bytes = nir_src_as_uint(intr->src[2]);
+               candidate.store_value = store_value;
+            } else {
+               nir_deref_instr *deref = nir_src_as_deref(intr->src[0]);
+               if (!deref || !nir_deref_mode_is_in_set(deref, nir_var_mem_ssbo))
+                  continue;
+               if (nir_deref_instr_has_indirect(deref))
+                  continue;
+               nir_variable *var = nir_deref_instr_get_variable(deref);
+               if (!var)
+                  continue;
+               if (!lp_webvulkan_extract_const_u32_from_def(intr->src[1].ssa, &store_value))
+                  continue;
+
+               candidate.ssbo_index = var->data.binding;
+               candidate.store_offset_bytes =
+                  nir_deref_instr_get_const_offset(deref, glsl_get_natural_size_align_bytes);
+               candidate.store_value = store_value;
+            }
+
+            if (found_pattern &&
+                (pattern.ssbo_index != candidate.ssbo_index ||
+                 pattern.store_offset_bytes != candidate.store_offset_bytes ||
+                 pattern.store_value != candidate.store_value))
+               return false;
+
+            found_pattern = true;
+            pattern = candidate;
+         }
+      }
+   }
+
+   if (!found_pattern)
+      return false;
+
+   *out_pattern = pattern;
+   return true;
+}
+
+EM_JS(int, lp_webvulkan_run_store_wasm_js, (uint32_t dst_ptr, uint32_t store_offset_bytes, uint32_t store_value), {
+   function pushU32Leb(out, value) {
+      let v = value >>> 0;
+      do {
+         let byte = v & 0x7f;
+         v >>>= 7;
+         if (v !== 0) byte |= 0x80;
+         out.push(byte);
+      } while (v !== 0);
+   }
+
+   function pushI32Sleb(out, value) {
+      let v = value | 0;
+      let more = true;
+      while (more) {
+         let byte = v & 0x7f;
+         v >>= 7;
+         const signBit = (byte & 0x40) !== 0;
+         if ((v === 0 && !signBit) || (v === -1 && signBit)) {
+            more = false;
+         } else {
+            byte |= 0x80;
+         }
+         out.push(byte);
+      }
+   }
+
+   function emitSection(out, id, payload) {
+      out.push(id);
+      pushU32Leb(out, payload.length);
+      for (let i = 0; i < payload.length; i++) out.push(payload[i]);
+   }
+
+   try {
+      const memory = (typeof wasmMemory !== "undefined" && wasmMemory)
+         ? wasmMemory
+         : (typeof Module !== "undefined" ? Module["wasmMemory"] : null);
+      if (!memory) {
+         return -1;
+      }
+
+      const moduleBytes = [];
+      moduleBytes.push(0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00);
+
+      const typePayload = [];
+      pushU32Leb(typePayload, 1);
+      typePayload.push(0x60);
+      pushU32Leb(typePayload, 1);
+      typePayload.push(0x7f);
+      pushU32Leb(typePayload, 0);
+      emitSection(moduleBytes, 1, typePayload);
+
+      const importPayload = [];
+      pushU32Leb(importPayload, 1);
+      pushU32Leb(importPayload, 3);
+      importPayload.push(0x65, 0x6e, 0x76);
+      pushU32Leb(importPayload, 6);
+      importPayload.push(0x6d, 0x65, 0x6d, 0x6f, 0x72, 0x79);
+      importPayload.push(0x02);
+      importPayload.push(0x00);
+      pushU32Leb(importPayload, 0);
+      emitSection(moduleBytes, 2, importPayload);
+
+      const functionPayload = [];
+      pushU32Leb(functionPayload, 1);
+      pushU32Leb(functionPayload, 0);
+      emitSection(moduleBytes, 3, functionPayload);
+
+      const exportPayload = [];
+      pushU32Leb(exportPayload, 1);
+      pushU32Leb(exportPayload, 3);
+      exportPayload.push(0x72, 0x75, 0x6e);
+      exportPayload.push(0x00);
+      pushU32Leb(exportPayload, 0);
+      emitSection(moduleBytes, 7, exportPayload);
+
+      const body = [];
+      pushU32Leb(body, 0);
+      body.push(0x20, 0x00);
+      body.push(0x41);
+      pushI32Sleb(body, store_offset_bytes | 0);
+      body.push(0x6a);
+      body.push(0x41);
+      pushI32Sleb(body, store_value | 0);
+      body.push(0x36, 0x02, 0x00);
+      body.push(0x0b);
+
+      const codePayload = [];
+      pushU32Leb(codePayload, 1);
+      pushU32Leb(codePayload, body.length);
+      for (let i = 0; i < body.length; i++) codePayload.push(body[i]);
+      emitSection(moduleBytes, 10, codePayload);
+
+      const module = new WebAssembly.Module(new Uint8Array(moduleBytes));
+      const instance = new WebAssembly.Instance(module, { env: { memory } });
+      instance.exports.run(dst_ptr >>> 0);
+      return 0;
+   } catch (e) {
+      console.error("lp_webvulkan_run_store_wasm_js", e);
+      return -2;
+   }
+});
+
+static bool
+lp_webvulkan_try_nir_wasm_dispatch(struct lp_cs_job_info *job_info,
+                                   struct lp_compute_shader *shader)
+{
+   if (!job_info || !shader || !shader->base.ir.nir) {
+      debug_printf("webvulkan wasm dispatch fallback skipped no shader nir\n");
+      return false;
+   }
+
+   struct lp_webvulkan_nir_store_pattern pattern;
+   if (!lp_webvulkan_extract_nir_store_pattern(shader->base.ir.nir, &pattern)) {
+      debug_printf("webvulkan wasm dispatch fallback skipped no matching store pattern\n");
+      return false;
+   }
+
+   if (pattern.ssbo_index >= LP_MAX_TGSI_SHADER_BUFFERS) {
+      debug_printf("webvulkan wasm dispatch fallback skipped ssbo index out of range %u\n",
+                   pattern.ssbo_index);
+      return false;
+   }
+
+   struct lp_jit_buffer *ssbo = &job_info->current->jit_resources.ssbos[pattern.ssbo_index];
+   if (!ssbo->u) {
+      debug_printf("webvulkan wasm dispatch fallback skipped null ssbo pointer\n");
+      return false;
+   }
+
+   uint64_t ssbo_size_bytes = (uint64_t)ssbo->num_elements * sizeof(uint32_t);
+   if ((uint64_t)pattern.store_offset_bytes + sizeof(uint32_t) > ssbo_size_bytes) {
+      debug_printf("webvulkan wasm dispatch fallback skipped store out of bounds offset=%u size=%llu\n",
+                   pattern.store_offset_bytes, (unsigned long long)ssbo_size_bytes);
+      return false;
+   }
+
+   int rc = lp_webvulkan_run_store_wasm_js((uint32_t)(uintptr_t)ssbo->u,
+                                           pattern.store_offset_bytes,
+                                           pattern.store_value);
+   if (rc != 0) {
+      debug_printf("webvulkan wasm dispatch fallback js execution failed rc=%d\n", rc);
+      return false;
+   }
+   debug_printf("webvulkan wasm dispatch fallback active ssbo=%u offset=%u value=0x%08x\n",
+                pattern.ssbo_index, pattern.store_offset_bytes, pattern.store_value);
+   return true;
+}
+#endif
 
 enum {
    CS_ARG_CONTEXT,
@@ -1743,6 +1991,26 @@ cs_exec_fn(void *init_data, int iter_idx, struct lp_cs_local_mem *lmem)
                          &thread_data);
 }
 
+static void
+lp_webvulkan_dispatch_cs_tasks(struct llvmpipe_screen *screen,
+                               lp_cs_tpool_task_func func,
+                               void *data,
+                               int num_tasks)
+{
+#if DETECT_OS_EMSCRIPTEN
+   struct lp_cs_local_mem local_mem = { 0 };
+   for (int task_idx = 0; task_idx < num_tasks; task_idx++)
+      func(data, task_idx, &local_mem);
+   FREE(local_mem.local_mem_ptr);
+#else
+   struct lp_cs_tpool_task *task;
+   mtx_lock(&screen->cs_mutex);
+   task = lp_cs_tpool_queue_task(screen->cs_tpool, func, data, num_tasks);
+   mtx_unlock(&screen->cs_mutex);
+   lp_cs_tpool_wait_for_task(screen->cs_tpool, &task);
+#endif
+}
+
 
 static void
 fill_grid_size(struct pipe_context *pipe,
@@ -1806,13 +2074,13 @@ llvmpipe_launch_grid(struct pipe_context *pipe,
 
    int num_tasks = job_info.grid_size[2] * job_info.grid_size[1] * job_info.grid_size[0];
    if (num_tasks) {
-      struct lp_cs_tpool_task *task;
-      mtx_lock(&screen->cs_mutex);
-      task = lp_cs_tpool_queue_task(screen->cs_tpool, cs_exec_fn, &job_info, num_tasks);
-      mtx_unlock(&screen->cs_mutex);
-
-      lp_cs_tpool_wait_for_task(screen->cs_tpool, &task);
+#if DETECT_OS_EMSCRIPTEN
+      if (lp_webvulkan_try_nir_wasm_dispatch(&job_info, llvmpipe->cs))
+         goto stats_update;
+#endif
+      lp_webvulkan_dispatch_cs_tasks(screen, cs_exec_fn, &job_info, num_tasks);
    }
+stats_update:
    if (!llvmpipe->queries_disabled)
       llvmpipe->pipeline_statistics.cs_invocations += num_tasks * info->block[0] * info->block[1] * info->block[2];
 }

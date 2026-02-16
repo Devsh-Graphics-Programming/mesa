@@ -1939,6 +1939,9 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateDevice(
       &vk_common_device_entrypoints, true);
    vk_device_dispatch_table_from_entrypoints(&dispatch_table,
       &lvp_device_entrypoints, false);
+   dispatch_table.CreateCommandPool = vk_common_CreateCommandPool;
+   dispatch_table.DestroyCommandPool = vk_common_DestroyCommandPool;
+   dispatch_table.AllocateCommandBuffers = vk_common_AllocateCommandBuffers;
    dispatch_table.CreatePipelineLayout = lvp_CreatePipelineLayout;
    dispatch_table.CreateShaderModule = lvp_CreateShaderModule;
    dispatch_table.DestroyShaderModule = lvp_DestroyShaderModule;

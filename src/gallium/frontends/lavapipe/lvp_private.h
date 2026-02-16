@@ -793,6 +793,13 @@ VkResult
 lvp_spirv_to_nir(struct lvp_pipeline *pipeline, const void *pipeline_pNext,
                  const VkPipelineShaderStageCreateInfo *sinfo, nir_shader **out_nir);
 
+int
+lvp_webvulkan_extract_nir_store_pattern(const uint32_t *spirv_words,
+                                        size_t spirv_word_count,
+                                        uint32_t *out_ssbo_index,
+                                        uint32_t *out_store_offset_bytes,
+                                        uint32_t *out_store_value);
+
 void
 lvp_shader_init(struct lvp_shader *shader, nir_shader *nir);
 
