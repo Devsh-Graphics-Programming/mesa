@@ -430,22 +430,51 @@ lvp_webvulkan_extract_store_from_deref(const nir_intrinsic_instr *intr,
       return false;
 
    nir_deref_instr *deref = nir_src_as_deref(intr->src[0]);
-   if (!deref || !nir_deref_mode_is_in_set(deref, nir_var_mem_ssbo))
+   if (!deref || !nir_deref_mode_is_in_set(deref, nir_var_mem_ssbo)) {
+      fprintf(stderr, "webvulkan extract_store_deref: no ssbo deref\n");
       return false;
+   }
 
-   if (nir_deref_instr_has_indirect(deref))
+   if (nir_deref_instr_has_indirect(deref)) {
+      fprintf(stderr, "webvulkan extract_store_deref: indirect deref\n");
       return false;
+   }
 
    nir_variable *var = nir_deref_instr_get_variable(deref);
-   if (!var)
-      return false;
 
-   if (!lvp_webvulkan_extract_const_u32_from_def(intr->src[1].ssa, out_store_value))
-      return false;
+   if (var) {
+      *out_ssbo_index = var->data.binding;
+   } else {
+      nir_binding binding = nir_chase_binding(intr->src[0]);
+      if (!binding.success) {
+         fprintf(stderr, "webvulkan extract_store_deref: nir_chase_binding failed\n");
+         return false;
+      }
+      if (binding.desc_set != 0) {
+         fprintf(stderr, "webvulkan extract_store_deref: unsupported desc_set=%u\n", binding.desc_set);
+         return false;
+      }
 
-   *out_ssbo_index = var->data.binding;
+      uint32_t binding_index = binding.binding;
+      for (unsigned i = 0; i < binding.num_indices; i++) {
+         if (!nir_src_is_const(binding.indices[i])) {
+            fprintf(stderr, "webvulkan extract_store_deref: non-const descriptor index\n");
+            return false;
+         }
+         binding_index += nir_src_as_uint(binding.indices[i]);
+      }
+      *out_ssbo_index = binding_index;
+   }
+
+   if (!lvp_webvulkan_extract_const_u32_from_def(intr->src[1].ssa, out_store_value)) {
+      fprintf(stderr, "webvulkan extract_store_deref: store value is not const-u32\n");
+      return false;
+   }
+
    *out_store_offset_bytes =
       nir_deref_instr_get_const_offset(deref, glsl_get_natural_size_align_bytes);
+   fprintf(stderr, "webvulkan extract_store_deref: success binding=%u offset=%u value=0x%08x\n",
+           *out_ssbo_index, *out_store_offset_bytes, *out_store_value);
    return true;
 }
 
@@ -524,14 +553,16 @@ lvp_webvulkan_extract_nir_store_pattern(const uint32_t *spirv_words,
       }
    }
 
-   ralloc_free(nir);
-
-   if (!found_pattern)
+   if (!found_pattern) {
+      nir_print_shader(nir, stderr);
+      ralloc_free(nir);
       return -4;
+   }
 
    *out_ssbo_index = ssbo_index;
    *out_store_offset_bytes = store_offset_bytes;
    *out_store_value = store_value;
+   ralloc_free(nir);
    return 0;
 }
 

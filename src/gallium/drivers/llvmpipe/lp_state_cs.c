@@ -87,6 +87,8 @@ struct lp_cs_job_info {
 #if DETECT_OS_EMSCRIPTEN
 struct lp_webvulkan_nir_store_pattern {
    uint32_t ssbo_index;
+   uint32_t descriptor_constbuf_index;
+   uint32_t descriptor_offset_bytes;
    uint32_t store_offset_bytes;
    uint32_t store_value;
 };
@@ -103,6 +105,37 @@ lp_webvulkan_extract_const_u32_from_def(nir_def *def, uint32_t *out_value)
 
    nir_load_const_instr *load_const = nir_instr_as_load_const(parent_instr);
    *out_value = load_const->value[0].u32;
+   return true;
+}
+
+static bool
+lp_webvulkan_extract_ssbo_source(nir_src src,
+                                 struct lp_webvulkan_nir_store_pattern *out_pattern)
+{
+   if (!out_pattern)
+      return false;
+
+   out_pattern->ssbo_index = UINT32_MAX;
+   out_pattern->descriptor_constbuf_index = UINT32_MAX;
+   out_pattern->descriptor_offset_bytes = 0;
+
+   if (nir_src_is_const(src)) {
+      out_pattern->ssbo_index = nir_src_as_uint(src);
+      return true;
+   }
+
+   nir_instr *parent = nir_def_instr(src.ssa);
+   if (!parent || parent->type != nir_instr_type_intrinsic)
+      return false;
+
+   nir_intrinsic_instr *intr = nir_instr_as_intrinsic(parent);
+   if (intr->intrinsic != nir_intrinsic_load_const_buf_base_addr_lvp)
+      return false;
+
+   if (!nir_src_is_const(intr->src[0]))
+      return false;
+
+   out_pattern->descriptor_constbuf_index = nir_src_as_uint(intr->src[0]);
    return true;
 }
 
@@ -131,12 +164,12 @@ lp_webvulkan_extract_nir_store_pattern(nir_shader *nir,
             struct lp_webvulkan_nir_store_pattern candidate = {0};
 
             if (intr->intrinsic == nir_intrinsic_store_ssbo) {
-               if (!nir_src_is_const(intr->src[1]) || !nir_src_is_const(intr->src[2]))
+               if (!lp_webvulkan_extract_ssbo_source(intr->src[1], &candidate) ||
+                   !nir_src_is_const(intr->src[2]))
                   continue;
                if (!lp_webvulkan_extract_const_u32_from_def(intr->src[0].ssa, &store_value))
                   continue;
 
-               candidate.ssbo_index = nir_src_as_uint(intr->src[1]);
                candidate.store_offset_bytes = nir_src_as_uint(intr->src[2]);
                candidate.store_value = store_value;
             } else {
@@ -159,6 +192,8 @@ lp_webvulkan_extract_nir_store_pattern(nir_shader *nir,
 
             if (found_pattern &&
                 (pattern.ssbo_index != candidate.ssbo_index ||
+                 pattern.descriptor_constbuf_index != candidate.descriptor_constbuf_index ||
+                 pattern.descriptor_offset_bytes != candidate.descriptor_offset_bytes ||
                  pattern.store_offset_bytes != candidate.store_offset_bytes ||
                  pattern.store_value != candidate.store_value))
                return false;
@@ -284,44 +319,91 @@ lp_webvulkan_try_nir_wasm_dispatch(struct lp_cs_job_info *job_info,
                                    struct lp_compute_shader *shader)
 {
    if (!job_info || !shader || !shader->base.ir.nir) {
-      debug_printf("webvulkan wasm dispatch fallback skipped no shader nir\n");
+      fprintf(stderr, "webvulkan fallback: no shader nir\n");
       return false;
    }
 
    struct lp_webvulkan_nir_store_pattern pattern;
    if (!lp_webvulkan_extract_nir_store_pattern(shader->base.ir.nir, &pattern)) {
-      debug_printf("webvulkan wasm dispatch fallback skipped no matching store pattern\n");
+      fprintf(stderr, "webvulkan fallback: no matching store pattern\n");
+      nir_print_shader(shader->base.ir.nir, stderr);
       return false;
    }
 
-   if (pattern.ssbo_index >= LP_MAX_TGSI_SHADER_BUFFERS) {
-      debug_printf("webvulkan wasm dispatch fallback skipped ssbo index out of range %u\n",
-                   pattern.ssbo_index);
+   const uint32_t *ssbo_ptr = NULL;
+   uint64_t ssbo_size_bytes = 0;
+   uint32_t resolved_ssbo_index = UINT32_MAX;
+
+   if (pattern.ssbo_index != UINT32_MAX) {
+      if (pattern.ssbo_index >= LP_MAX_TGSI_SHADER_BUFFERS) {
+         fprintf(stderr, "webvulkan fallback: ssbo index out of range %u\n", pattern.ssbo_index);
+         return false;
+      }
+      struct lp_jit_buffer *ssbo = &job_info->current->jit_resources.ssbos[pattern.ssbo_index];
+      if (ssbo->u) {
+         ssbo_ptr = ssbo->u;
+         ssbo_size_bytes = ssbo->num_elements;
+         resolved_ssbo_index = pattern.ssbo_index;
+      }
+   }
+
+   if (!ssbo_ptr && pattern.descriptor_constbuf_index != UINT32_MAX) {
+      if (pattern.descriptor_constbuf_index >= LP_MAX_TGSI_CONST_BUFFERS) {
+         fprintf(stderr, "webvulkan fallback: constbuf index out of range %u\n",
+                 pattern.descriptor_constbuf_index);
+         return false;
+      }
+      struct lp_jit_buffer *descriptor_set_buffer =
+         &job_info->current->jit_resources.constants[pattern.descriptor_constbuf_index];
+      if (descriptor_set_buffer->u) {
+         const uint8_t *descriptor_base = (const uint8_t *)descriptor_set_buffer->u;
+         const struct lp_descriptor *descriptor =
+            (const struct lp_descriptor *)(descriptor_base + pattern.descriptor_offset_bytes);
+         if (descriptor->buffer.u) {
+            ssbo_ptr = descriptor->buffer.u;
+            ssbo_size_bytes = descriptor->buffer.num_elements;
+            resolved_ssbo_index = 0;
+         }
+      }
+   }
+
+   if (!ssbo_ptr) {
+      fprintf(stderr,
+              "webvulkan fallback: could not resolve ssbo (index=%u constbuf=%u desc_offset=%u)\n",
+              pattern.ssbo_index, pattern.descriptor_constbuf_index, pattern.descriptor_offset_bytes);
+      for (uint32_t i = 0; i < 8; i++) {
+         struct lp_jit_buffer *candidate_ssbo = &job_info->current->jit_resources.ssbos[i];
+         if (candidate_ssbo->u) {
+            fprintf(stderr, "webvulkan fallback: candidate ssbo index=%u ptr=%p size=%u\n",
+                    i, candidate_ssbo->u, candidate_ssbo->num_elements);
+         }
+         struct lp_jit_buffer *candidate_const = &job_info->current->jit_resources.constants[i];
+         if (candidate_const->u) {
+            fprintf(stderr, "webvulkan fallback: candidate constbuf index=%u ptr=%p size=%u\n",
+                    i, candidate_const->u, candidate_const->num_elements);
+         }
+      }
       return false;
    }
 
-   struct lp_jit_buffer *ssbo = &job_info->current->jit_resources.ssbos[pattern.ssbo_index];
-   if (!ssbo->u) {
-      debug_printf("webvulkan wasm dispatch fallback skipped null ssbo pointer\n");
-      return false;
-   }
-
-   uint64_t ssbo_size_bytes = (uint64_t)ssbo->num_elements * sizeof(uint32_t);
    if ((uint64_t)pattern.store_offset_bytes + sizeof(uint32_t) > ssbo_size_bytes) {
-      debug_printf("webvulkan wasm dispatch fallback skipped store out of bounds offset=%u size=%llu\n",
-                   pattern.store_offset_bytes, (unsigned long long)ssbo_size_bytes);
+      fprintf(stderr, "webvulkan fallback: out of bounds index=%u offset=%u size=%llu\n",
+              resolved_ssbo_index, pattern.store_offset_bytes, (unsigned long long)ssbo_size_bytes);
       return false;
    }
 
-   int rc = lp_webvulkan_run_store_wasm_js((uint32_t)(uintptr_t)ssbo->u,
+   fprintf(stderr, "webvulkan fallback: ssbo=%u ptr=%p offset=%u value=0x%08x size=%llu\n",
+           resolved_ssbo_index, ssbo_ptr, pattern.store_offset_bytes, pattern.store_value,
+           (unsigned long long)ssbo_size_bytes);
+
+   int rc = lp_webvulkan_run_store_wasm_js((uint32_t)(uintptr_t)ssbo_ptr,
                                            pattern.store_offset_bytes,
                                            pattern.store_value);
    if (rc != 0) {
-      debug_printf("webvulkan wasm dispatch fallback js execution failed rc=%d\n", rc);
+      fprintf(stderr, "webvulkan fallback: js execution failed rc=%d\n", rc);
       return false;
    }
-   debug_printf("webvulkan wasm dispatch fallback active ssbo=%u offset=%u value=0x%08x\n",
-                pattern.ssbo_index, pattern.store_offset_bytes, pattern.store_value);
+   fprintf(stderr, "webvulkan fallback: active\n");
    return true;
 }
 #endif
