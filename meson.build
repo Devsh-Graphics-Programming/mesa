@@ -1825,6 +1825,9 @@ endif
 
 llvm_modules = ['bitwriter', 'engine', 'mcdisassembler', 'mcjit', 'core', 'executionengine', 'scalaropts', 'transformutils', 'instcombine']
 llvm_optional_modules = ['coroutines']
+if host_machine.system() == 'emscripten'
+  llvm_optional_modules += ['interpreter']
+endif
 if with_amd_vk or with_gallium_radeonsi
   llvm_modules += ['amdgpu', 'bitreader', 'ipo']
 endif
@@ -1845,7 +1848,15 @@ endif
 # so any architecture not in the exhaustive list will have to rely on LLVM
 # ORCJIT for llvmpipe functionality.
 llvm_has_mcjit = host_machine.cpu_family() in ['aarch64', 'arm', 'ppc', 'ppc64', 's390x', 'x86', 'x86_64']
-llvm_with_orcjit = get_option('llvm-orcjit') or not llvm_has_mcjit
+if host_machine.system() == 'emscripten'
+  llvm_with_orcjit = get_option('llvm-orcjit')
+else
+  llvm_with_orcjit = get_option('llvm-orcjit') or not llvm_has_mcjit
+endif
+
+if host_machine.system() == 'emscripten' and not llvm_with_orcjit
+  llvm_modules += ['interpreter']
+endif
 
 if (with_amd_vk or with_gallium_radeonsi) and amd_with_llvm
   _llvm_version = '>= 18.0.0'

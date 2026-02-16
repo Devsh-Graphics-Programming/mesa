@@ -1416,8 +1416,15 @@ lvp_physical_device_init(struct lvp_physical_device *device,
    VkResult result;
 
    struct vk_physical_device_dispatch_table dispatch_table;
+#if DETECT_OS_EMSCRIPTEN
+   vk_physical_device_dispatch_table_from_entrypoints(
+      &dispatch_table, &vk_common_physical_device_entrypoints, true);
+   vk_physical_device_dispatch_table_from_entrypoints(
+      &dispatch_table, &lvp_physical_device_entrypoints, false);
+#else
    vk_physical_device_dispatch_table_from_entrypoints(
       &dispatch_table, &lvp_physical_device_entrypoints, true);
+#endif
    vk_physical_device_dispatch_table_from_entrypoints(
       &dispatch_table, &wsi_physical_device_entrypoints, false);
    result = vk_physical_device_init(&device->vk, &instance->vk,
@@ -1517,8 +1524,15 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateInstance(
       return vk_error(NULL, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    struct vk_instance_dispatch_table dispatch_table;
+#if DETECT_OS_EMSCRIPTEN
+   vk_instance_dispatch_table_from_entrypoints(
+      &dispatch_table, &vk_common_instance_entrypoints, true);
+   vk_instance_dispatch_table_from_entrypoints(
+      &dispatch_table, &lvp_instance_entrypoints, false);
+#else
    vk_instance_dispatch_table_from_entrypoints(
       &dispatch_table, &lvp_instance_entrypoints, true);
+#endif
    vk_instance_dispatch_table_from_entrypoints(
       &dispatch_table, &wsi_instance_entrypoints, false);
 
@@ -1638,6 +1652,25 @@ VKAPI_ATTR void VKAPI_CALL lvp_GetPhysicalDeviceProperties(
 {
    vk_common_GetPhysicalDeviceProperties(physicalDevice, pProperties);
 }
+
+#if DETECT_OS_EMSCRIPTEN
+VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateShaderModule(
+   VkDevice device,
+   const VkShaderModuleCreateInfo *pCreateInfo,
+   const VkAllocationCallbacks *pAllocator,
+   VkShaderModule *pShaderModule)
+{
+   return vk_common_CreateShaderModule(device, pCreateInfo, pAllocator, pShaderModule);
+}
+
+VKAPI_ATTR void VKAPI_CALL lvp_DestroyShaderModule(
+   VkDevice device,
+   VkShaderModule shaderModule,
+   const VkAllocationCallbacks *pAllocator)
+{
+   vk_common_DestroyShaderModule(device, shaderModule, pAllocator);
+}
+#endif
 
 VKAPI_ATTR void VKAPI_CALL lvp_GetPhysicalDeviceProperties2(
    VkPhysicalDevice physicalDevice,
@@ -1843,11 +1876,13 @@ lvp_queue_init(struct lvp_device *device, struct lvp_queue *queue,
    if (result != VK_SUCCESS)
       return result;
 
+#if !DETECT_OS_EMSCRIPTEN
    result = vk_queue_enable_submit_thread(&queue->vk);
    if (result != VK_SUCCESS) {
       vk_queue_finish(&queue->vk);
       return result;
    }
+#endif
 
    queue->ctx = device->pscreen->context_create(device->pscreen, NULL, PIPE_CONTEXT_ROBUST_BUFFER_ACCESS);
    queue->cso = cso_create_context(queue->ctx, CSO_NO_VBUF);
@@ -1899,8 +1934,20 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateDevice(
    device->print_cmds = debug_get_bool_option("LVP_CMD_DEBUG", false);
 
    struct vk_device_dispatch_table dispatch_table;
+#if DETECT_OS_EMSCRIPTEN
+   vk_device_dispatch_table_from_entrypoints(&dispatch_table,
+      &vk_common_device_entrypoints, true);
+   vk_device_dispatch_table_from_entrypoints(&dispatch_table,
+      &lvp_device_entrypoints, false);
+   dispatch_table.CreatePipelineLayout = lvp_CreatePipelineLayout;
+   dispatch_table.CreateShaderModule = lvp_CreateShaderModule;
+   dispatch_table.DestroyShaderModule = lvp_DestroyShaderModule;
+   dispatch_table.CreateComputePipelines = lvp_CreateComputePipelines;
+   dispatch_table.DestroyPipeline = lvp_DestroyPipeline;
+#else
    vk_device_dispatch_table_from_entrypoints(&dispatch_table,
       &lvp_device_entrypoints, true);
+#endif
    lvp_add_enqueue_cmd_entrypoints(&dispatch_table);
    vk_device_dispatch_table_from_entrypoints(&dispatch_table,
       &wsi_device_entrypoints, false);
@@ -1913,7 +1960,9 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateDevice(
       return result;
    }
 
+#if !DETECT_OS_EMSCRIPTEN
    vk_device_enable_threaded_submit(&device->vk);
+#endif
    device->vk.command_buffer_ops = &lvp_cmd_buffer_ops;
 
    device->pscreen = physical_device->pscreen;

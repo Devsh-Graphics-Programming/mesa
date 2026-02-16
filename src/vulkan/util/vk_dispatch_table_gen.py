@@ -65,7 +65,7 @@ TEMPLATE_H = Template(COPYRIGHT + """\
 extern "C" {
 #endif
 
-#ifdef _MSC_VER
+#if defined(_MSC_VER) || defined(__EMSCRIPTEN__)
 VKAPI_ATTR void VKAPI_CALL vk_entrypoint_stub(void);
 #endif
 
@@ -567,7 +567,7 @@ vk_device_entrypoint_is_enabled(int index, uint32_t core_version,
    }
 }
 
-#ifdef _MSC_VER
+#if defined(_MSC_VER) || defined(__EMSCRIPTEN__)
 VKAPI_ATTR void VKAPI_CALL vk_entrypoint_stub(void)
 {
    UNREACHABLE("Entrypoint not implemented");
@@ -612,6 +612,8 @@ void vk_${type}_dispatch_table_from_entrypoints(
 #ifdef _MSC_VER
             assert(entry[i] != NULL);
             if (vk_function_is_stub(entry[i]))
+#elif defined(__EMSCRIPTEN__)
+            if (entry[i] == NULL || vk_function_is_stub(entry[i]))
 #else
             if (entry[i] == NULL)
 #endif
@@ -626,6 +628,8 @@ void vk_${type}_dispatch_table_from_entrypoints(
 #ifdef _MSC_VER
             assert(entry[i] != NULL);
             if (disp[disp_index] == NULL && !vk_function_is_stub(entry[i]))
+#elif defined(__EMSCRIPTEN__)
+            if (disp[disp_index] == NULL && entry[i] != NULL && !vk_function_is_stub(entry[i]))
 #else
             if (disp[disp_index] == NULL)
 #endif

@@ -493,7 +493,12 @@ lp_build_create_jit_compiler_for_module(LLVMExecutionEngineRef *OutJIT,
    options.StackAlignmentOverride = 4;
 #endif
 
-   builder.setEngineKind(EngineKind::JIT)
+   builder
+#if DETECT_OS_EMSCRIPTEN
+          .setEngineKind(EngineKind::Interpreter)
+#else
+          .setEngineKind(EngineKind::JIT)
+#endif
           .setErrorStr(&Error)
           .setTargetOptions(options)
 #if LLVM_VERSION_MAJOR >= 18
@@ -588,21 +593,29 @@ lp_build_create_jit_compiler_for_module(LLVMExecutionEngineRef *OutJIT,
    }
 
    ShaderMemoryManager *MM = NULL;
+#if DETECT_OS_EMSCRIPTEN
+   *OutCode = NULL;
+#else
    BaseMemoryManager* JMM = reinterpret_cast<BaseMemoryManager*>(CMM);
    MM = new ShaderMemoryManager(JMM);
    *OutCode = MM->getGeneratedCode();
 
    builder.setMCJITMemoryManager(std::unique_ptr<RTDyldMemoryManager>(MM));
    MM = NULL; // ownership taken by std::unique_ptr
+#endif
 
    ExecutionEngine *JIT;
 
    JIT = builder.create();
 
    if (cache_out) {
+#if DETECT_OS_EMSCRIPTEN
+      cache_out->jit_obj_cache = NULL;
+#else
       LPObjectCache *objcache = new LPObjectCache(cache_out);
       JIT->setObjectCache(objcache);
       cache_out->jit_obj_cache = (void *)objcache;
+#endif
    }
 
 #if LLVM_USE_INTEL_JITEVENTS
@@ -613,9 +626,12 @@ lp_build_create_jit_compiler_for_module(LLVMExecutionEngineRef *OutJIT,
       *OutJIT = wrap(JIT);
       return 0;
    }
-   lp_free_generated_code(*OutCode);
+   if (*OutCode)
+      lp_free_generated_code(*OutCode);
    *OutCode = 0;
+#if !DETECT_OS_EMSCRIPTEN
    delete MM;
+#endif
    *OutError = strdup(Error.c_str());
    return 1;
 }

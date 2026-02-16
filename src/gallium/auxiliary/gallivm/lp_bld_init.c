@@ -315,6 +315,9 @@ lp_build_init(void)
     * constructors to be called at load time.
     */
    LLVMLinkInMCJIT();
+#if DETECT_OS_EMSCRIPTEN
+   LLVMLinkInInterpreter();
+#endif
 
    lp_init_env_options();
 
@@ -417,9 +420,13 @@ gallivm_compile_module(struct gallivm_state *gallivm)
                    "[-mattr=<-mattr option(s)>]");
    }
 
+   LLVMTargetMachineRef pass_tm = NULL;
+#if !DETECT_OS_EMSCRIPTEN
+   pass_tm = LLVMGetExecutionEngineTargetMachine(gallivm->engine);
+#endif
    lp_passmgr_run(gallivm->passmgr,
                   gallivm->module,
-                  LLVMGetExecutionEngineTargetMachine(gallivm->engine),
+                  pass_tm,
                   gallivm->module_name);
 
    /* Setting the module's DataLayout to an empty string will cause the
