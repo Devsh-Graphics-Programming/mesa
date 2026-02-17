@@ -55,6 +55,7 @@
 #include "nir_serialize.h"
 
 #include "draw/draw_context.h"
+#include "draw/draw_tess.h"
 #include "draw/draw_llvm.h"
 #include "draw/draw_mesh_prim.h"
 
@@ -252,6 +253,68 @@ EM_JS(int, lp_webvulkan_run_store_wasm_js, (uint32_t dst_ptr, uint32_t store_off
          return -1;
       }
 
+      const injected = globalThis.__webvulkan_llvm_ir_store_wasm;
+      if (injected && injected.bytes) {
+         try {
+            const entrypoint = typeof injected.entrypoint === "string" && injected.entrypoint.length > 0
+               ? injected.entrypoint
+               : "run";
+            if (!injected.module) {
+               const wasmBytes = injected.bytes instanceof Uint8Array
+                  ? injected.bytes
+                  : new Uint8Array(injected.bytes);
+               injected.module = new WebAssembly.Module(wasmBytes);
+            }
+            let instance;
+            try {
+               instance = new WebAssembly.Instance(injected.module, { env: { memory } });
+            } catch (instanceError) {
+               const errorText = String(instanceError);
+               if (!errorText.includes("mismatch in shared state of memory")) {
+                  throw instanceError;
+               }
+
+               if (!injected.sharedMemory) {
+                  injected.sharedMemory = new WebAssembly.Memory({
+                     initial: 2,
+                     maximum: 65536,
+                     shared: true
+                  });
+               }
+               instance = new WebAssembly.Instance(injected.module, { env: { memory: injected.sharedMemory } });
+               const runFnShared = instance.exports[entrypoint];
+               if (typeof runFnShared !== "function") {
+                  return -12;
+               }
+               runFnShared(0, (store_offset_bytes >>> 0), (store_value >>> 0));
+
+               const srcOffset = store_offset_bytes >>> 0;
+               const dstOffset = (dst_ptr + store_offset_bytes) >>> 0;
+               const srcBytes = new Uint8Array(injected.sharedMemory.buffer, srcOffset, 4);
+               HEAPU8[dstOffset + 0] = srcBytes[0];
+               HEAPU8[dstOffset + 1] = srcBytes[1];
+               HEAPU8[dstOffset + 2] = srcBytes[2];
+               HEAPU8[dstOffset + 3] = srcBytes[3];
+
+               globalThis.__webvulkan_llvm_ir_store_wasm_used = true;
+               globalThis.__webvulkan_llvm_ir_store_wasm_provider = `${injected.provider || "unknown"}+shared-memory-shim`;
+               return 0;
+            }
+
+            const runFn = instance.exports[entrypoint];
+            if (typeof runFn !== "function") {
+               return -12;
+            }
+            runFn((dst_ptr >>> 0), (store_offset_bytes >>> 0), (store_value >>> 0));
+            globalThis.__webvulkan_llvm_ir_store_wasm_used = true;
+            globalThis.__webvulkan_llvm_ir_store_wasm_provider = injected.provider || "unknown";
+            return 0;
+         } catch (e) {
+            console.error("lp_webvulkan_run_store_wasm_js injected module", e);
+            return -13;
+         }
+      }
+
       const moduleBytes = [];
       moduleBytes.push(0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00);
 
@@ -405,6 +468,40 @@ lp_webvulkan_try_nir_wasm_dispatch(struct lp_cs_job_info *job_info,
    }
    fprintf(stderr, "webvulkan fallback: active\n");
    return true;
+}
+
+static void
+lp_webvulkan_cs_nojit_stub(const struct lp_jit_cs_context *context,
+                           const struct lp_jit_resources *resources,
+                           uint32_t x,
+                           uint32_t y,
+                           uint32_t z,
+                           uint32_t grid_x,
+                           uint32_t grid_y,
+                           uint32_t grid_z,
+                           uint32_t grid_size_x,
+                           uint32_t grid_size_y,
+                           uint32_t grid_size_z,
+                           uint32_t work_dim,
+                           uint32_t draw_id,
+                           struct vertex_header *io,
+                           struct lp_jit_cs_thread_data *thread_data)
+{
+   (void)context;
+   (void)resources;
+   (void)x;
+   (void)y;
+   (void)z;
+   (void)grid_x;
+   (void)grid_y;
+   (void)grid_z;
+   (void)grid_size_x;
+   (void)grid_size_y;
+   (void)grid_size_z;
+   (void)work_dim;
+   (void)draw_id;
+   (void)io;
+   (void)thread_data;
 }
 #endif
 
@@ -1396,7 +1493,8 @@ llvmpipe_remove_cs_shader_variant(struct llvmpipe_context *lp,
                    lp->nr_cs_variants, variant->nr_instrs, lp->nr_cs_instrs);
    }
 
-   gallivm_destroy(variant->gallivm);
+   if (variant->gallivm)
+      gallivm_destroy(variant->gallivm);
 
    /* remove from shader's list */
    list_del(&variant->list_item_local.list);
@@ -1608,6 +1706,9 @@ generate_variant(struct llvmpipe_context *lp,
                  mesa_shader_stage sh_type,
                  const struct lp_compute_shader_variant_key *key)
 {
+#if DETECT_OS_EMSCRIPTEN
+   fprintf(stderr, "webvulkan debug: generate_variant sh_type=%d\n", (int)sh_type);
+#endif
    struct llvmpipe_screen *screen = llvmpipe_screen(lp->pipe.screen);
 
    struct lp_compute_shader_variant *variant =
@@ -1645,6 +1746,20 @@ generate_variant(struct llvmpipe_context *lp,
    variant->list_item_global.base = variant;
    variant->list_item_local.base = variant;
    variant->no = shader->variants_created++;
+
+#if DETECT_OS_EMSCRIPTEN
+   if (sh_type == MESA_SHADER_COMPUTE) {
+      struct lp_webvulkan_nir_store_pattern webvulkan_pattern = {0};
+      if (lp_webvulkan_extract_nir_store_pattern(shader->base.ir.nir, &webvulkan_pattern)) {
+         fprintf(stderr, "webvulkan debug: nojit variant selected\n");
+         variant->jit_function = lp_webvulkan_cs_nojit_stub;
+         variant->function_name = strdup("webvulkan_cs_nojit_stub");
+         variant->nr_instrs = 0;
+         return variant;
+      }
+      fprintf(stderr, "webvulkan debug: nojit variant NOT selected\n");
+   }
+#endif
 
    if ((LP_DEBUG & DEBUG_CS) || (gallivm_debug & GALLIVM_DEBUG_IR)) {
       lp_debug_cs_variant(variant);
@@ -2017,6 +2132,41 @@ llvmpipe_cs_update_derived(struct llvmpipe_context *llvmpipe)
    llvmpipe->cs_dirty = 0;
 }
 
+#if DETECT_OS_EMSCRIPTEN
+static void
+llvmpipe_cs_prepare_webvulkan_fastpath(struct llvmpipe_context *llvmpipe)
+{
+   if (llvmpipe->cs_dirty & LP_CSNEW_CONSTANTS) {
+      lp_csctx_set_cs_constants(llvmpipe->csctx,
+                                ARRAY_SIZE(llvmpipe->constants[MESA_SHADER_COMPUTE]),
+                                llvmpipe->constants[MESA_SHADER_COMPUTE]);
+      update_csctx_consts(llvmpipe, llvmpipe->csctx);
+   }
+
+   if (llvmpipe->cs_dirty & LP_CSNEW_SSBOS) {
+      lp_csctx_set_cs_ssbos(llvmpipe->csctx,
+                            ARRAY_SIZE(llvmpipe->ssbos[MESA_SHADER_COMPUTE]),
+                            llvmpipe->ssbos[MESA_SHADER_COMPUTE]);
+      update_csctx_ssbo(llvmpipe, llvmpipe->csctx);
+   }
+
+   if (llvmpipe->cs_dirty & LP_CSNEW_SAMPLER_VIEW)
+      lp_csctx_set_sampler_views(llvmpipe->csctx,
+                                 llvmpipe->num_sampler_views[MESA_SHADER_COMPUTE],
+                                 llvmpipe->sampler_views[MESA_SHADER_COMPUTE]);
+
+   if (llvmpipe->cs_dirty & LP_CSNEW_SAMPLER)
+      lp_csctx_set_sampler_state(llvmpipe->csctx,
+                                 llvmpipe->num_samplers[MESA_SHADER_COMPUTE],
+                                 llvmpipe->samplers[MESA_SHADER_COMPUTE]);
+
+   if (llvmpipe->cs_dirty & LP_CSNEW_IMAGES)
+      lp_csctx_set_cs_images(llvmpipe->csctx,
+                             ARRAY_SIZE(llvmpipe->images[MESA_SHADER_COMPUTE]),
+                             llvmpipe->images[MESA_SHADER_COMPUTE]);
+}
+#endif
+
 
 static void
 cs_exec_fn(void *init_data, int iter_idx, struct lp_cs_local_mem *lmem)
@@ -2137,8 +2287,6 @@ llvmpipe_launch_grid(struct pipe_context *pipe,
 
    memset(&job_info, 0, sizeof(job_info));
 
-   llvmpipe_cs_update_derived(llvmpipe);
-
    fill_grid_size(pipe, 0, info, job_info.grid_size);
 
    job_info.grid_base[0] = info->grid_base[0];
@@ -2157,9 +2305,14 @@ llvmpipe_launch_grid(struct pipe_context *pipe,
    int num_tasks = job_info.grid_size[2] * job_info.grid_size[1] * job_info.grid_size[0];
    if (num_tasks) {
 #if DETECT_OS_EMSCRIPTEN
+      llvmpipe_cs_prepare_webvulkan_fastpath(llvmpipe);
       if (lp_webvulkan_try_nir_wasm_dispatch(&job_info, llvmpipe->cs))
+      {
+         llvmpipe->cs_dirty = 0;
          goto stats_update;
+      }
 #endif
+      llvmpipe_cs_update_derived(llvmpipe);
       lp_webvulkan_dispatch_cs_tasks(screen, cs_exec_fn, &job_info, num_tasks);
    }
 stats_update:

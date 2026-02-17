@@ -54,7 +54,9 @@ llvmpipe_flush(struct pipe_context *pipe,
    struct llvmpipe_context *llvmpipe = llvmpipe_context(pipe);
    struct llvmpipe_screen *screen = llvmpipe_screen(pipe->screen);
 
+#if !DETECT_OS_EMSCRIPTEN
    draw_flush(llvmpipe->draw);
+#endif
 
    /* ask the setup module to flush */
    lp_setup_flush(llvmpipe->setup, reason);

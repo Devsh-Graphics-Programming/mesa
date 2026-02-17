@@ -253,7 +253,9 @@ llvmpipe_create_context(struct pipe_screen *screen, void *priv,
    llvmpipe_init_context_resource_funcs(&llvmpipe->pipe);
    llvmpipe_init_surface_functions(llvmpipe);
 
+#if !DETECT_OS_EMSCRIPTEN
    llvmpipe_init_sampler_matrix(llvmpipe);
+#endif
 
 #ifdef HAVE_LIBDRM
    llvmpipe_init_fence_funcs(&llvmpipe->pipe);
@@ -274,6 +276,13 @@ llvmpipe_create_context(struct pipe_screen *screen, void *priv,
    if (!llvmpipe->context.ref)
       goto fail;
 
+#if DETECT_OS_EMSCRIPTEN
+   /* Compute-focused context path for wasm: avoid graphics draw/setup initialization,
+    * which depends on host JIT availability.
+    */
+   llvmpipe->draw = NULL;
+   llvmpipe->setup = NULL;
+#else
    /*
     * Create drawing context and plug our rendering stage into it.
     */
@@ -295,6 +304,7 @@ llvmpipe_create_context(struct pipe_screen *screen, void *priv,
    llvmpipe->setup = lp_setup_create(&llvmpipe->pipe, llvmpipe->draw);
    if (!llvmpipe->setup)
       goto fail;
+#endif
 
    llvmpipe->csctx = lp_csctx_create(&llvmpipe->pipe);
    if (!llvmpipe->csctx)
@@ -314,6 +324,7 @@ llvmpipe_create_context(struct pipe_screen *screen, void *priv,
 
    llvmpipe->pipe.const_uploader = llvmpipe->pipe.stream_uploader;
 
+#if !DETECT_OS_EMSCRIPTEN
    llvmpipe->blitter = util_blitter_create(&llvmpipe->pipe);
    if (!llvmpipe->blitter) {
       goto fail;
@@ -337,6 +348,7 @@ llvmpipe_create_context(struct pipe_screen *screen, void *priv,
 
    /* initial state for clipping - enabled, with no guardband */
    draw_set_driver_clipping(llvmpipe->draw, false, false, false, true);
+#endif
 
    lp_reset_counters();
 

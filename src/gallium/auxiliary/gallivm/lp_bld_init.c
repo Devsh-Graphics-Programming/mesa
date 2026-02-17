@@ -314,14 +314,17 @@ lp_build_init(void)
     * component is linked at buildtime, which is sufficient for its static
     * constructors to be called at load time.
     */
-   LLVMLinkInMCJIT();
 #if DETECT_OS_EMSCRIPTEN
    LLVMLinkInInterpreter();
+#else
+   LLVMLinkInMCJIT();
 #endif
 
    lp_init_env_options();
 
+#if !DETECT_OS_EMSCRIPTEN
    lp_set_target_options();
+#endif
 
    lp_bld_ppc_disable_denorms();
 

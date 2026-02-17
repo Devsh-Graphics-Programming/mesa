@@ -481,6 +481,21 @@ lp_build_create_jit_compiler_for_module(LLVMExecutionEngineRef *OutJIT,
 {
    using namespace llvm;
 
+#if DETECT_OS_EMSCRIPTEN
+   (void)CMM;
+   (void)OptLevel;
+   *OutCode = NULL;
+   if (cache_out) {
+      cache_out->jit_obj_cache = NULL;
+   }
+   LLVMBool interp_result = LLVMCreateInterpreterForModule(OutJIT, M, OutError);
+   fprintf(stderr, "webvulkan gallivm: LLVMCreateInterpreterForModule result=%d\n", (int)interp_result);
+   if (interp_result && OutError && *OutError) {
+      fprintf(stderr, "webvulkan gallivm: interpreter error=%s\n", *OutError);
+   }
+   return interp_result;
+#endif
+
    std::string Error;
    EngineBuilder builder(std::unique_ptr<Module>(unwrap(M)));
 

@@ -5565,7 +5565,9 @@ VkResult lvp_execute_cmds(struct lvp_device *device,
 
    state->start_vb = -1;
    state->num_vb = 0;
+#if !DETECT_OS_EMSCRIPTEN
    cso_unbind_context(queue->cso);
+#endif
    for (unsigned i = 0; i < ARRAY_SIZE(state->so_targets); i++) {
       if (state->so_targets[i]) {
          state->pctx->stream_output_target_destroy(state->pctx, state->so_targets[i]);

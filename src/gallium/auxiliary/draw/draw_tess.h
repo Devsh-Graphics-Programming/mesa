@@ -32,10 +32,11 @@
 #include "tgsi/tgsi_scan.h"
 
 struct draw_context;
-#if DRAW_LLVM_AVAILABLE
 
 #define NUM_PATCH_INPUTS 32
 #define NUM_TCS_INPUTS (PIPE_MAX_SHADER_INPUTS - NUM_PATCH_INPUTS)
+
+#if DRAW_LLVM_AVAILABLE
 
 struct draw_tcs_inputs {
   /* num vertices per prim */

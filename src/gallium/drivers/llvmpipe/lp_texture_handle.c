@@ -245,6 +245,14 @@ llvmpipe_init_sampler_matrix(struct llvmpipe_context *ctx)
 
    simple_mtx_init(&matrix->lock, mtx_plain);
 
+#if DETECT_OS_EMSCRIPTEN
+   memset(matrix->jit_sample_functions, 0, sizeof(matrix->jit_sample_functions));
+   memset(matrix->jit_fetch_functions, 0, sizeof(matrix->jit_fetch_functions));
+   matrix->jit_size_functions[0] = NULL;
+   matrix->jit_size_functions[1] = NULL;
+   return;
+#endif
+
    matrix->jit_size_functions[0] = compile_jit_size_function(ctx, false);
    matrix->jit_size_functions[1] = compile_jit_size_function(ctx, true);
 }
