@@ -26,6 +26,7 @@
 #include "util/u_memory.h"
 #include "util/os_time.h"
 #include "util/u_dump.h"
+#include "util/u_debug.h"
 #include "util/u_string.h"
 #include "gallivm/lp_bld_const.h"
 #include "gallivm/lp_bld_debug.h"
@@ -53,6 +54,7 @@
 #include "compiler/glsl_types.h"
 #include "util/mesa-sha1.h"
 #include "nir_serialize.h"
+#include <string.h>
 
 #include "draw/draw_context.h"
 #include "draw/draw_tess.h"
@@ -61,6 +63,9 @@
 
 #if DETECT_OS_EMSCRIPTEN
 #include <emscripten/emscripten.h>
+#if !GALLIVM_USE_ORCJIT
+#include <llvm-c/ExecutionEngine.h>
+#endif
 #endif
 
 /** Fragment shader number (for debugging) */
@@ -109,6 +114,125 @@ webvulkan_runtime_mark_wasm_usage(int used,
 extern void
 webvulkan_runtime_capture_shader_key(uint32_t key_lo,
                                      uint32_t key_hi) __attribute__((weak));
+
+extern int
+webvulkan_runtime_fast_wasm_enabled(void) __attribute__((weak));
+
+enum lp_webvulkan_dispatch_mode {
+   LP_WEBVULKAN_DISPATCH_MODE_AUTO = 0,
+   LP_WEBVULKAN_DISPATCH_MODE_RAW_LLVM_IR,
+   LP_WEBVULKAN_DISPATCH_MODE_FAST_WASM,
+};
+
+extern int
+lp_webvulkan_run_store_wasm_js(const uint8_t *module_bytes,
+                               uint32_t module_size,
+                               const char *entrypoint_cstr,
+                               uint32_t dst_ptr,
+                               uint32_t store_offset_bytes,
+                               uint32_t store_value);
+
+static const char *
+lp_webvulkan_dispatch_mode_name(enum lp_webvulkan_dispatch_mode mode)
+{
+   switch (mode) {
+   case LP_WEBVULKAN_DISPATCH_MODE_RAW_LLVM_IR:
+      return "raw_llvm_ir";
+   case LP_WEBVULKAN_DISPATCH_MODE_FAST_WASM:
+      return "fast_wasm";
+   default:
+      return "auto";
+   }
+}
+
+static enum lp_webvulkan_dispatch_mode
+lp_webvulkan_parse_dispatch_mode(const char *value)
+{
+   if (!value || value[0] == '\0' || strcmp(value, "auto") == 0)
+      return LP_WEBVULKAN_DISPATCH_MODE_AUTO;
+
+   if (strcmp(value, "raw") == 0 ||
+       strcmp(value, "raw_llvm_ir") == 0 ||
+       strcmp(value, "llvm_ir") == 0 ||
+       strcmp(value, "0") == 0)
+      return LP_WEBVULKAN_DISPATCH_MODE_RAW_LLVM_IR;
+
+   if (strcmp(value, "fast") == 0 ||
+       strcmp(value, "fast_wasm") == 0 ||
+       strcmp(value, "wasm") == 0 ||
+       strcmp(value, "1") == 0)
+      return LP_WEBVULKAN_DISPATCH_MODE_FAST_WASM;
+
+   return LP_WEBVULKAN_DISPATCH_MODE_AUTO;
+}
+
+static enum lp_webvulkan_dispatch_mode
+lp_webvulkan_get_dispatch_mode(void)
+{
+   const char *mode_option = debug_get_option("WEBVULKAN_LVP_DISPATCH_MODE", "auto");
+   enum lp_webvulkan_dispatch_mode mode = lp_webvulkan_parse_dispatch_mode(mode_option);
+
+   if (mode != LP_WEBVULKAN_DISPATCH_MODE_AUTO)
+      return mode;
+
+   if (webvulkan_runtime_fast_wasm_enabled)
+      return webvulkan_runtime_fast_wasm_enabled() ?
+         LP_WEBVULKAN_DISPATCH_MODE_FAST_WASM :
+         LP_WEBVULKAN_DISPATCH_MODE_RAW_LLVM_IR;
+
+   return mode;
+}
+
+static bool
+lp_webvulkan_dispatch_prefers_fast_wasm(enum lp_webvulkan_dispatch_mode mode)
+{
+   return mode != LP_WEBVULKAN_DISPATCH_MODE_RAW_LLVM_IR;
+}
+
+static void
+lp_webvulkan_mark_wasm_usage_with_provider(int used, int rc, const char *provider)
+{
+   if (!webvulkan_runtime_mark_wasm_usage)
+      return;
+
+   if (!used) {
+      webvulkan_runtime_mark_wasm_usage(0, provider);
+      return;
+   }
+
+   if (rc == 2) {
+      char provider_with_mode[192];
+      snprintf(provider_with_mode, sizeof(provider_with_mode),
+               "%s+shared-memory-shim", provider);
+      webvulkan_runtime_mark_wasm_usage(1, provider_with_mode);
+      return;
+   }
+
+   webvulkan_runtime_mark_wasm_usage(1, provider);
+}
+
+static bool
+lp_webvulkan_try_inline_store_wasm(const uint32_t *ssbo_ptr,
+                                   const struct lp_webvulkan_nir_store_pattern *pattern,
+                                   bool trace_this_dispatch,
+                                   const char *trace_reason)
+{
+   int inline_rc = lp_webvulkan_run_store_wasm_js(NULL,
+                                                  0,
+                                                  NULL,
+                                                  (uint32_t)(uintptr_t)ssbo_ptr,
+                                                  pattern->store_offset_bytes,
+                                                  pattern->store_value);
+   if (inline_rc < 0)
+      return false;
+
+   lp_webvulkan_mark_wasm_usage_with_provider(1, inline_rc, "inline-wasm-module");
+
+   if (trace_this_dispatch)
+      fprintf(stderr, "webvulkan fallback: %s\n", trace_reason);
+
+   return true;
+}
 
 static void
 lp_webvulkan_make_shader_key(struct lp_compute_shader *shader,
@@ -471,8 +595,10 @@ lp_webvulkan_try_nir_wasm_dispatch(struct lp_cs_job_info *job_info,
    uint32_t shader_key_hi = 0;
    const uint8_t *runtime_module_bytes = NULL;
    uint32_t runtime_module_size = 0;
-   const char *runtime_module_entrypoint = "run";
-   const char *runtime_module_provider = "inline-wasm-module";
+   const char *runtime_module_entrypoint = NULL;
+   const char *runtime_module_provider = NULL;
+   enum lp_webvulkan_dispatch_mode dispatch_mode = lp_webvulkan_get_dispatch_mode();
+   const bool prefers_fast_wasm = lp_webvulkan_dispatch_prefers_fast_wasm(dispatch_mode);
 
    if (pattern.ssbo_index != UINT32_MAX) {
       if (pattern.ssbo_index >= LP_MAX_TGSI_SHADER_BUFFERS) {
@@ -536,27 +662,78 @@ lp_webvulkan_try_nir_wasm_dispatch(struct lp_cs_job_info *job_info,
       fprintf(stderr, "webvulkan fallback: ssbo=%u ptr=%p offset=%u value=0x%08x size=%llu\n",
               resolved_ssbo_index, ssbo_ptr, pattern.store_offset_bytes, pattern.store_value,
               (unsigned long long)ssbo_size_bytes);
+      fprintf(stderr, "webvulkan fallback: dispatch_mode=%s\n",
+              lp_webvulkan_dispatch_mode_name(dispatch_mode));
    }
 
    lp_webvulkan_make_shader_key(shader, &shader_key_lo, &shader_key_hi);
    if (webvulkan_runtime_capture_shader_key) {
       webvulkan_runtime_capture_shader_key(shader_key_lo, shader_key_hi);
    }
-   if (webvulkan_runtime_lookup_wasm_module) {
-      const char *lookup_entrypoint = NULL;
-      const char *lookup_provider = NULL;
-      if (webvulkan_runtime_lookup_wasm_module(shader_key_lo,
-                                               shader_key_hi,
-                                               &runtime_module_bytes,
-                                               &runtime_module_size,
-                                               &lookup_entrypoint,
-                                               &lookup_provider)) {
-         if (lookup_entrypoint && lookup_entrypoint[0] != '\0')
-            runtime_module_entrypoint = lookup_entrypoint;
-         if (lookup_provider && lookup_provider[0] != '\0')
-            runtime_module_provider = lookup_provider;
-      }
+
+   if (dispatch_mode == LP_WEBVULKAN_DISPATCH_MODE_RAW_LLVM_IR) {
+      lp_webvulkan_mark_wasm_usage_with_provider(0, 0, "raw_llvm_ir");
+      if (trace_this_dispatch)
+         fprintf(stderr, "webvulkan fallback: runtime mode=raw_llvm_ir\n");
+      if (trace_this_dispatch)
+         webvulkan_trace_once = true;
+      return false;
    }
+
+   if (!webvulkan_runtime_lookup_wasm_module) {
+      if (prefers_fast_wasm &&
+          lp_webvulkan_try_inline_store_wasm(ssbo_ptr,
+                                             &pattern,
+                                             trace_this_dispatch,
+                                             "inline wasm module (no registry)")) {
+         if (trace_this_dispatch)
+            webvulkan_trace_once = true;
+         return true;
+      }
+
+      const char *fallback_reason =
+         prefers_fast_wasm ?
+         "fast_wasm_no_registry" : "raw_llvm_ir";
+      lp_webvulkan_mark_wasm_usage_with_provider(0, 0, fallback_reason);
+      if (trace_this_dispatch)
+         fprintf(stderr, "webvulkan fallback: no runtime wasm registry symbol\n");
+      if (trace_this_dispatch)
+         webvulkan_trace_once = true;
+      return false;
+   }
+
+   const char *lookup_entrypoint = NULL;
+   const char *lookup_provider = NULL;
+   if (!webvulkan_runtime_lookup_wasm_module(shader_key_lo,
+                                             shader_key_hi,
+                                             &runtime_module_bytes,
+                                             &runtime_module_size,
+                                             &lookup_entrypoint,
+                                             &lookup_provider) ||
+       !runtime_module_bytes || runtime_module_size == 0 ||
+       !lookup_entrypoint || lookup_entrypoint[0] == '\0') {
+      if (prefers_fast_wasm &&
+          lp_webvulkan_try_inline_store_wasm(ssbo_ptr,
+                                             &pattern,
+                                             trace_this_dispatch,
+                                             "inline wasm module (no registered module)")) {
+         if (trace_this_dispatch)
+            webvulkan_trace_once = true;
+         return true;
+      }
+
+      const char *fallback_reason =
+         prefers_fast_wasm ?
+         "fast_wasm_no_module" : "raw_llvm_ir";
+      lp_webvulkan_mark_wasm_usage_with_provider(0, 0, fallback_reason);
+      if (trace_this_dispatch)
+         fprintf(stderr, "webvulkan fallback: runtime wasm module missing\n");
+      if (trace_this_dispatch)
+         webvulkan_trace_once = true;
+      return false;
+   }
+   runtime_module_entrypoint = lookup_entrypoint;
+   runtime_module_provider = (lookup_provider && lookup_provider[0] != '\0') ? lookup_provider : "runtime-registry";
 
    if (trace_this_dispatch) {
       fprintf(stderr,
@@ -575,55 +752,12 @@ lp_webvulkan_try_nir_wasm_dispatch(struct lp_cs_job_info *job_info,
       fprintf(stderr, "webvulkan fallback: js execution failed rc=%d\n", rc);
       return false;
    }
-   if (webvulkan_runtime_mark_wasm_usage) {
-      if (rc == 2) {
-         char provider_with_mode[192];
-         snprintf(provider_with_mode, sizeof(provider_with_mode),
-                  "%s+shared-memory-shim", runtime_module_provider);
-         webvulkan_runtime_mark_wasm_usage(1, provider_with_mode);
-      } else {
-         webvulkan_runtime_mark_wasm_usage(1, runtime_module_provider);
-      }
-   }
+   lp_webvulkan_mark_wasm_usage_with_provider(1, rc, runtime_module_provider);
    if (trace_this_dispatch) {
       fprintf(stderr, "webvulkan fallback: active\n");
       webvulkan_trace_once = true;
    }
    return true;
-}
-
-static void
-lp_webvulkan_cs_nojit_stub(const struct lp_jit_cs_context *context,
-                           const struct lp_jit_resources *resources,
-                           uint32_t x,
-                           uint32_t y,
-                           uint32_t z,
-                           uint32_t grid_x,
-                           uint32_t grid_y,
-                           uint32_t grid_z,
-                           uint32_t grid_size_x,
-                           uint32_t grid_size_y,
-                           uint32_t grid_size_z,
-                           uint32_t work_dim,
-                           uint32_t draw_id,
-                           struct vertex_header *io,
-                           struct lp_jit_cs_thread_data *thread_data)
-{
-   (void)context;
-   (void)resources;
-   (void)x;
-   (void)y;
-   (void)z;
-   (void)grid_x;
-   (void)grid_y;
-   (void)grid_z;
-   (void)grid_size_x;
-   (void)grid_size_y;
-   (void)grid_size_z;
-   (void)work_dim;
-   (void)draw_id;
-   (void)io;
-   (void)thread_data;
 }
 #endif
 
@@ -654,6 +788,74 @@ enum {
    CS_ARG_CORO_OUTPUTS,
    CS_ARG_MAX,
 };
+
+#if DETECT_OS_EMSCRIPTEN && !GALLIVM_USE_ORCJIT
+static void
+lp_webvulkan_run_cs_via_llvm_interpreter(struct lp_compute_shader_variant *variant,
+                                         const struct lp_jit_cs_context *context,
+                                         const struct lp_jit_resources *resources,
+                                         uint32_t block_size_x,
+                                         uint32_t block_size_y,
+                                         uint32_t block_size_z,
+                                         uint32_t grid_x,
+                                         uint32_t grid_y,
+                                         uint32_t grid_z,
+                                         uint32_t grid_size_x,
+                                         uint32_t grid_size_y,
+                                         uint32_t grid_size_z,
+                                         uint32_t work_dim,
+                                         uint32_t draw_id,
+                                         struct vertex_header *io,
+                                         struct lp_jit_cs_thread_data *thread_data)
+{
+   if (!variant || !variant->gallivm || !variant->gallivm->engine)
+      return;
+
+   LLVMValueRef function = variant->function;
+   if (!function && variant->gallivm->module && variant->function_name)
+      function = LLVMGetNamedFunction(variant->gallivm->module, variant->function_name);
+   if (!function)
+      return;
+   variant->function = function;
+
+   unsigned num_params = LLVMCountParams(function);
+
+   LLVMTypeRef i32 = LLVMIntTypeInContext(variant->gallivm->context, 32);
+   LLVMGenericValueRef args[16] = {0};
+   args[0] = LLVMCreateGenericValueOfPointer((void *)context);
+   args[1] = LLVMCreateGenericValueOfPointer((void *)resources);
+   args[2] = LLVMCreateGenericValueOfInt(i32, block_size_x, 0);
+   args[3] = LLVMCreateGenericValueOfInt(i32, block_size_y, 0);
+   args[4] = LLVMCreateGenericValueOfInt(i32, block_size_z, 0);
+   args[5] = LLVMCreateGenericValueOfInt(i32, grid_x, 0);
+   args[6] = LLVMCreateGenericValueOfInt(i32, grid_y, 0);
+   args[7] = LLVMCreateGenericValueOfInt(i32, grid_z, 0);
+   args[8] = LLVMCreateGenericValueOfInt(i32, grid_size_x, 0);
+   args[9] = LLVMCreateGenericValueOfInt(i32, grid_size_y, 0);
+   args[10] = LLVMCreateGenericValueOfInt(i32, grid_size_z, 0);
+   args[11] = LLVMCreateGenericValueOfInt(i32, work_dim, 0);
+   args[12] = LLVMCreateGenericValueOfInt(i32, draw_id, 0);
+   args[13] = LLVMCreateGenericValueOfPointer((void *)io);
+   args[14] = LLVMCreateGenericValueOfPointer((void *)thread_data);
+   args[15] = LLVMCreateGenericValueOfInt(i32, 1u, 0);
+
+   unsigned call_arg_count = num_params;
+   if (call_arg_count > ARRAY_SIZE(args))
+      call_arg_count = ARRAY_SIZE(args);
+
+   LLVMGenericValueRef result = LLVMRunFunction(variant->gallivm->engine,
+                                                function,
+                                                call_arg_count,
+                                                args);
+   if (result)
+      LLVMDisposeGenericValue(result);
+
+   for (unsigned i = 0; i < call_arg_count; ++i) {
+      if (args[i])
+         LLVMDisposeGenericValue(args[i]);
+   }
+}
+#endif
 
 struct lp_mesh_llvm_iface {
    struct lp_build_mesh_iface base;
@@ -1828,9 +2030,6 @@ generate_variant(struct llvmpipe_context *lp,
                  mesa_shader_stage sh_type,
                  const struct lp_compute_shader_variant_key *key)
 {
-#if DETECT_OS_EMSCRIPTEN
-   fprintf(stderr, "webvulkan debug: generate_variant sh_type=%d\n", (int)sh_type);
-#endif
    struct llvmpipe_screen *screen = llvmpipe_screen(lp->pipe.screen);
 
    struct lp_compute_shader_variant *variant =
@@ -1869,20 +2068,6 @@ generate_variant(struct llvmpipe_context *lp,
    variant->list_item_local.base = variant;
    variant->no = shader->variants_created++;
 
-#if DETECT_OS_EMSCRIPTEN
-   if (sh_type == MESA_SHADER_COMPUTE) {
-      struct lp_webvulkan_nir_store_pattern webvulkan_pattern = {0};
-      if (lp_webvulkan_extract_nir_store_pattern(shader->base.ir.nir, &webvulkan_pattern)) {
-         fprintf(stderr, "webvulkan debug: nojit variant selected\n");
-         variant->jit_function = lp_webvulkan_cs_nojit_stub;
-         variant->function_name = strdup("webvulkan_cs_nojit_stub");
-         variant->nr_instrs = 0;
-         return variant;
-      }
-      fprintf(stderr, "webvulkan debug: nojit variant NOT selected\n");
-   }
-#endif
-
    if ((LP_DEBUG & DEBUG_CS) || (gallivm_debug & GALLIVM_DEBUG_IR)) {
       lp_debug_cs_variant(variant);
    }
@@ -1918,7 +2103,11 @@ generate_variant(struct llvmpipe_context *lp,
    if (needs_caching) {
       lp_disk_cache_insert_shader(screen, &cached, ir_sha1_cache_key);
    }
+#if DETECT_OS_EMSCRIPTEN && !GALLIVM_USE_ORCJIT
+   /* LLVM interpreter execution in Wasm needs module IR to stay alive at runtime. */
+#else
    gallivm_free_ir(variant->gallivm);
+#endif
    return variant;
 }
 
@@ -2335,6 +2524,17 @@ cs_exec_fn(void *init_data, int iter_idx, struct lp_cs_local_mem *lmem)
       size_t payload_offset = job_info->payload_stride * iter_idx;
       thread_data.payload = (char *)thread_data.payload + payload_offset;
    }
+#if DETECT_OS_EMSCRIPTEN && !GALLIVM_USE_ORCJIT
+   lp_webvulkan_run_cs_via_llvm_interpreter(variant,
+                                            &job_info->current->jit_context,
+                                            &job_info->current->jit_resources,
+                                            job_info->block_size[0], job_info->block_size[1], job_info->block_size[2],
+                                            grid_x, grid_y, grid_z,
+                                            job_info->grid_size[0], job_info->grid_size[1], job_info->grid_size[2],
+                                            job_info->work_dim, job_info->draw_id,
+                                            io_ptr,
+                                            &thread_data);
+#else
    variant->jit_function(&job_info->current->jit_context,
                          &job_info->current->jit_resources,
                          job_info->block_size[0], job_info->block_size[1], job_info->block_size[2],
@@ -2343,6 +2543,7 @@ cs_exec_fn(void *init_data, int iter_idx, struct lp_cs_local_mem *lmem)
                          job_info->work_dim, job_info->draw_id,
                          io_ptr,
                          &thread_data);
+#endif
 }
 
 static void

@@ -235,6 +235,10 @@ init_gallivm_state(struct gallivm_state *gallivm, const char *name,
    if (!gallivm->module)
       goto fail;
 
+#if DETECT_OS_EMSCRIPTEN
+   LLVMSetTarget(gallivm->module, "wasm32-unknown-emscripten");
+#endif
+
 #if DETECT_ARCH_X86
    lp_set_module_stack_alignment_override(gallivm->module, 4);
 #endif
@@ -396,7 +400,15 @@ gallivm_compile_module(struct gallivm_state *gallivm)
       gallivm->di_builder = NULL;
    }
 
-   LLVMSetDataLayout(gallivm->module, "");
+   if (DETECT_OS_EMSCRIPTEN) {
+      char *td_str = LLVMCopyStringRepOfTargetData(gallivm->target);
+      if (td_str) {
+         LLVMSetDataLayout(gallivm->module, td_str);
+         LLVMDisposeMessage(td_str);
+      }
+   } else {
+      LLVMSetDataLayout(gallivm->module, "");
+   }
    assert(!gallivm->engine);
    if (!init_gallivm_engine(gallivm)) {
       assert(0);
