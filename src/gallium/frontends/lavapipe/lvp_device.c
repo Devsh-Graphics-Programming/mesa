@@ -82,6 +82,26 @@ static bool has_cooperative_matrix(void) {
    return (lp_native_vector_width / 32) >= 8;
 }
 
+#if DETECT_OS_EMSCRIPTEN
+static bool
+webvulkan_debug_logs_enabled(void)
+{
+   static bool initialized = false;
+   static bool enabled = false;
+   if (!initialized) {
+      enabled = debug_get_bool_option("WEBVULKAN_DEBUG_LOGS", false);
+      initialized = true;
+   }
+   return enabled;
+}
+
+#define WEBVULKAN_DEBUG_LOG(...)                                    \
+   do {                                                             \
+      if (webvulkan_debug_logs_enabled())                           \
+         fprintf(stderr, __VA_ARGS__);                              \
+   } while (0)
+#endif
+
 VKAPI_ATTR VkResult VKAPI_CALL lvp_EnumerateInstanceVersion(uint32_t* pApiVersion)
 {
    *pApiVersion = LVP_API_VERSION;
@@ -1872,14 +1892,14 @@ lvp_queue_init(struct lvp_device *device, struct lvp_queue *queue,
                uint32_t index_in_family)
 {
 #if DETECT_OS_EMSCRIPTEN
-   fprintf(stderr, "webvulkan lvp_queue_init stage=begin\n");
+   WEBVULKAN_DEBUG_LOG("webvulkan lvp_queue_init stage=begin\n");
 #endif
    VkResult result = vk_queue_init(&queue->vk, &device->vk, create_info,
                                    index_in_family);
    if (result != VK_SUCCESS)
       return result;
 #if DETECT_OS_EMSCRIPTEN
-   fprintf(stderr, "webvulkan lvp_queue_init stage=after_vk_queue_init rc=%d\n", (int)result);
+   WEBVULKAN_DEBUG_LOG("webvulkan lvp_queue_init stage=after_vk_queue_init rc=%d\n", (int)result);
 #endif
 
 #if !DETECT_OS_EMSCRIPTEN
@@ -1892,15 +1912,15 @@ lvp_queue_init(struct lvp_device *device, struct lvp_queue *queue,
 
    queue->ctx = device->pscreen->context_create(device->pscreen, NULL, PIPE_CONTEXT_ROBUST_BUFFER_ACCESS);
 #if DETECT_OS_EMSCRIPTEN
-   fprintf(stderr, "webvulkan lvp_queue_init stage=after_context_create ctx=%p\n", (void *)queue->ctx);
+   WEBVULKAN_DEBUG_LOG("webvulkan lvp_queue_init stage=after_context_create ctx=%p\n", (void *)queue->ctx);
 #endif
    queue->cso = cso_create_context(queue->ctx, CSO_NO_VBUF);
 #if DETECT_OS_EMSCRIPTEN
-   fprintf(stderr, "webvulkan lvp_queue_init stage=after_cso_create cso=%p\n", (void *)queue->cso);
+   WEBVULKAN_DEBUG_LOG("webvulkan lvp_queue_init stage=after_cso_create cso=%p\n", (void *)queue->cso);
 #endif
    queue->uploader = u_upload_create(queue->ctx, 1024 * 1024, PIPE_BIND_CONSTANT_BUFFER, PIPE_USAGE_STREAM, 0);
 #if DETECT_OS_EMSCRIPTEN
-   fprintf(stderr, "webvulkan lvp_queue_init stage=after_u_upload_create uploader=%p\n", (void *)queue->uploader);
+   WEBVULKAN_DEBUG_LOG("webvulkan lvp_queue_init stage=after_u_upload_create uploader=%p\n", (void *)queue->uploader);
 #endif
 
    queue->vk.driver_submit = lvp_queue_submit;
@@ -1909,7 +1929,7 @@ lvp_queue_init(struct lvp_device *device, struct lvp_queue *queue,
    queue->pipeline_destroys = UTIL_DYNARRAY_INIT;
 
 #if DETECT_OS_EMSCRIPTEN
-   fprintf(stderr, "webvulkan lvp_queue_init stage=done\n");
+   WEBVULKAN_DEBUG_LOG("webvulkan lvp_queue_init stage=done\n");
 #endif
    return VK_SUCCESS;
 }
@@ -1935,7 +1955,7 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateDevice(
    VkDevice*                                   pDevice)
 {
 #if DETECT_OS_EMSCRIPTEN
-   fprintf(stderr, "webvulkan lvp_CreateDevice stage=begin\n");
+   WEBVULKAN_DEBUG_LOG("webvulkan lvp_CreateDevice stage=begin\n");
 #endif
    VK_FROM_HANDLE(lvp_physical_device, physical_device, physicalDevice);
    struct lvp_device *device;
@@ -1980,7 +2000,7 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateDevice(
                                     &dispatch_table, pCreateInfo,
                                     pAllocator);
 #if DETECT_OS_EMSCRIPTEN
-   fprintf(stderr, "webvulkan lvp_CreateDevice stage=after_vk_device_init rc=%d\n", (int)result);
+   WEBVULKAN_DEBUG_LOG("webvulkan lvp_CreateDevice stage=after_vk_device_init rc=%d\n", (int)result);
 #endif
    if (result != VK_SUCCESS) {
       vk_free(&device->vk.alloc, device);
@@ -2016,7 +2036,7 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateDevice(
       result = lvp_queue_init(device, &device->queue, &dummy_create_info, 0);
    }
 #if DETECT_OS_EMSCRIPTEN
-   fprintf(stderr, "webvulkan lvp_CreateDevice stage=after_lvp_queue_init rc=%d\n", (int)result);
+   WEBVULKAN_DEBUG_LOG("webvulkan lvp_CreateDevice stage=after_lvp_queue_init rc=%d\n", (int)result);
 #endif
 
    if (result != VK_SUCCESS) {
@@ -2030,7 +2050,7 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateDevice(
    shstate.ir.nir = b.shader;
    device->noop_fs = device->queue.ctx->create_fs_state(device->queue.ctx, &shstate);
 #if DETECT_OS_EMSCRIPTEN
-   fprintf(stderr, "webvulkan lvp_CreateDevice stage=after_create_fs_state noop_fs=%p\n", device->noop_fs);
+   WEBVULKAN_DEBUG_LOG("webvulkan lvp_CreateDevice stage=after_create_fs_state noop_fs=%p\n", device->noop_fs);
 #endif
    _mesa_hash_table_init(&device->bda, NULL, _mesa_hash_pointer, _mesa_key_pointer_equal);
    simple_mtx_init(&device->bda_lock, mtx_plain);
@@ -2038,7 +2058,7 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateDevice(
    uint32_t zero = 0;
    device->zero_buffer = pipe_buffer_create_with_data(device->queue.ctx, 0, PIPE_USAGE_IMMUTABLE, sizeof(uint32_t), &zero);
 #if DETECT_OS_EMSCRIPTEN
-   fprintf(stderr, "webvulkan lvp_CreateDevice stage=after_zero_buffer zero_buffer=%p\n", (void *)device->zero_buffer);
+   WEBVULKAN_DEBUG_LOG("webvulkan lvp_CreateDevice stage=after_zero_buffer zero_buffer=%p\n", (void *)device->zero_buffer);
 #endif
 
    if (device->queue.ctx->create_texture_handle) {
@@ -2054,7 +2074,7 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateDevice(
       device->null_image_handle = NULL;
    }
 #if DETECT_OS_EMSCRIPTEN
-   fprintf(stderr, "webvulkan lvp_CreateDevice stage=after_null_handles tex=%p img=%p\n", device->null_texture_handle, device->null_image_handle);
+   WEBVULKAN_DEBUG_LOG("webvulkan lvp_CreateDevice stage=after_null_handles tex=%p img=%p\n", device->null_texture_handle, device->null_image_handle);
 #endif
 
    device->bda_texture_handles = UTIL_DYNARRAY_INIT;
@@ -2064,7 +2084,7 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateDevice(
 
    result = vk_meta_device_init(&device->vk, &device->meta);
 #if DETECT_OS_EMSCRIPTEN
-   fprintf(stderr, "webvulkan lvp_CreateDevice stage=after_vk_meta_device_init rc=%d\n", (int)result);
+   WEBVULKAN_DEBUG_LOG("webvulkan lvp_CreateDevice stage=after_vk_meta_device_init rc=%d\n", (int)result);
 #endif
    if (result != VK_SUCCESS) {
       lvp_DestroyDevice(lvp_device_to_handle(device), pAllocator);
@@ -2076,7 +2096,7 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateDevice(
    *pDevice = lvp_device_to_handle(device);
 
 #if DETECT_OS_EMSCRIPTEN
-   fprintf(stderr, "webvulkan lvp_CreateDevice stage=done\n");
+   WEBVULKAN_DEBUG_LOG("webvulkan lvp_CreateDevice stage=done\n");
 #endif
    return VK_SUCCESS;
 

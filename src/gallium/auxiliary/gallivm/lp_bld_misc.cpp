@@ -88,6 +88,20 @@
 
 static void lp_run_atexit_for_destructors(void);
 
+#if DETECT_OS_EMSCRIPTEN
+static bool
+lp_webvulkan_debug_logs_enabled()
+{
+   static bool initialized = false;
+   static bool enabled = false;
+   if (!initialized) {
+      enabled = debug_get_bool_option("WEBVULKAN_DEBUG_LOGS", false);
+      initialized = true;
+   }
+   return enabled;
+}
+#endif
+
 namespace {
 
 class LLVMEnsureMultithreaded {
@@ -489,9 +503,11 @@ lp_build_create_jit_compiler_for_module(LLVMExecutionEngineRef *OutJIT,
       cache_out->jit_obj_cache = NULL;
    }
    LLVMBool interp_result = LLVMCreateInterpreterForModule(OutJIT, M, OutError);
-   fprintf(stderr, "webvulkan gallivm: LLVMCreateInterpreterForModule result=%d\n", (int)interp_result);
+   if (lp_webvulkan_debug_logs_enabled())
+      fprintf(stderr, "webvulkan gallivm: LLVMCreateInterpreterForModule result=%d\n", (int)interp_result);
    if (interp_result && OutError && *OutError) {
-      fprintf(stderr, "webvulkan gallivm: interpreter error=%s\n", *OutError);
+      if (lp_webvulkan_debug_logs_enabled())
+         fprintf(stderr, "webvulkan gallivm: interpreter error=%s\n", *OutError);
    }
    return interp_result;
 #endif

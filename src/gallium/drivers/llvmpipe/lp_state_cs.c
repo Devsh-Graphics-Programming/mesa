@@ -189,6 +189,24 @@ lp_webvulkan_dispatch_prefers_fast_wasm(enum lp_webvulkan_dispatch_mode mode)
    return mode != LP_WEBVULKAN_DISPATCH_MODE_RAW_LLVM_IR;
 }
 
+static bool
+lp_webvulkan_debug_logs_enabled(void)
+{
+   static bool initialized = false;
+   static bool enabled = false;
+   if (!initialized) {
+      enabled = debug_get_bool_option("WEBVULKAN_DEBUG_LOGS", false);
+      initialized = true;
+   }
+   return enabled;
+}
+
+#define LP_WEBVULKAN_DEBUG_LOG(...)                                 \
+   do {                                                             \
+      if (lp_webvulkan_debug_logs_enabled())                        \
+         fprintf(stderr, __VA_ARGS__);                              \
+   } while (0)
+
 static void
 lp_webvulkan_mark_wasm_usage_with_provider(int used, int rc, const char *provider)
 {
@@ -229,7 +247,7 @@ lp_webvulkan_try_inline_store_wasm(const uint32_t *ssbo_ptr,
    lp_webvulkan_mark_wasm_usage_with_provider(1, inline_rc, "inline-wasm-module");
 
    if (trace_this_dispatch)
-      fprintf(stderr, "webvulkan fallback: %s\n", trace_reason);
+      LP_WEBVULKAN_DEBUG_LOG("webvulkan fallback: %s\n", trace_reason);
 
    return true;
 }
@@ -577,14 +595,15 @@ lp_webvulkan_try_nir_wasm_dispatch(struct lp_cs_job_info *job_info,
    const bool trace_this_dispatch = !webvulkan_trace_once;
 
    if (!job_info || !shader || !shader->base.ir.nir) {
-      fprintf(stderr, "webvulkan fallback: no shader nir\n");
+      LP_WEBVULKAN_DEBUG_LOG("webvulkan fallback: no shader nir\n");
       return false;
    }
 
    struct lp_webvulkan_nir_store_pattern pattern;
    if (!lp_webvulkan_extract_nir_store_pattern(shader->base.ir.nir, &pattern)) {
-      fprintf(stderr, "webvulkan fallback: no matching store pattern\n");
-      nir_print_shader(shader->base.ir.nir, stderr);
+      LP_WEBVULKAN_DEBUG_LOG("webvulkan fallback: no matching store pattern\n");
+      if (lp_webvulkan_debug_logs_enabled())
+         nir_print_shader(shader->base.ir.nir, stderr);
       return false;
    }
 
@@ -602,7 +621,7 @@ lp_webvulkan_try_nir_wasm_dispatch(struct lp_cs_job_info *job_info,
 
    if (pattern.ssbo_index != UINT32_MAX) {
       if (pattern.ssbo_index >= LP_MAX_TGSI_SHADER_BUFFERS) {
-         fprintf(stderr, "webvulkan fallback: ssbo index out of range %u\n", pattern.ssbo_index);
+         LP_WEBVULKAN_DEBUG_LOG("webvulkan fallback: ssbo index out of range %u\n", pattern.ssbo_index);
          return false;
       }
       struct lp_jit_buffer *ssbo = &job_info->current->jit_resources.ssbos[pattern.ssbo_index];
@@ -615,8 +634,8 @@ lp_webvulkan_try_nir_wasm_dispatch(struct lp_cs_job_info *job_info,
 
    if (!ssbo_ptr && pattern.descriptor_constbuf_index != UINT32_MAX) {
       if (pattern.descriptor_constbuf_index >= LP_MAX_TGSI_CONST_BUFFERS) {
-         fprintf(stderr, "webvulkan fallback: constbuf index out of range %u\n",
-                 pattern.descriptor_constbuf_index);
+         LP_WEBVULKAN_DEBUG_LOG("webvulkan fallback: constbuf index out of range %u\n",
+                                pattern.descriptor_constbuf_index);
          return false;
       }
       struct lp_jit_buffer *descriptor_set_buffer =
@@ -634,36 +653,37 @@ lp_webvulkan_try_nir_wasm_dispatch(struct lp_cs_job_info *job_info,
    }
 
    if (!ssbo_ptr) {
-      fprintf(stderr,
-              "webvulkan fallback: could not resolve ssbo (index=%u constbuf=%u desc_offset=%u)\n",
-              pattern.ssbo_index, pattern.descriptor_constbuf_index, pattern.descriptor_offset_bytes);
+      LP_WEBVULKAN_DEBUG_LOG(
+         "webvulkan fallback: could not resolve ssbo (index=%u constbuf=%u desc_offset=%u)\n",
+         pattern.ssbo_index, pattern.descriptor_constbuf_index, pattern.descriptor_offset_bytes
+      );
       for (uint32_t i = 0; i < 8; i++) {
          struct lp_jit_buffer *candidate_ssbo = &job_info->current->jit_resources.ssbos[i];
          if (candidate_ssbo->u) {
-            fprintf(stderr, "webvulkan fallback: candidate ssbo index=%u ptr=%p size=%u\n",
-                    i, candidate_ssbo->u, candidate_ssbo->num_elements);
+            LP_WEBVULKAN_DEBUG_LOG("webvulkan fallback: candidate ssbo index=%u ptr=%p size=%u\n",
+                                   i, candidate_ssbo->u, candidate_ssbo->num_elements);
          }
          struct lp_jit_buffer *candidate_const = &job_info->current->jit_resources.constants[i];
          if (candidate_const->u) {
-            fprintf(stderr, "webvulkan fallback: candidate constbuf index=%u ptr=%p size=%u\n",
-                    i, candidate_const->u, candidate_const->num_elements);
+            LP_WEBVULKAN_DEBUG_LOG("webvulkan fallback: candidate constbuf index=%u ptr=%p size=%u\n",
+                                   i, candidate_const->u, candidate_const->num_elements);
          }
       }
       return false;
    }
 
    if ((uint64_t)pattern.store_offset_bytes + sizeof(uint32_t) > ssbo_size_bytes) {
-      fprintf(stderr, "webvulkan fallback: out of bounds index=%u offset=%u size=%llu\n",
-              resolved_ssbo_index, pattern.store_offset_bytes, (unsigned long long)ssbo_size_bytes);
+      LP_WEBVULKAN_DEBUG_LOG("webvulkan fallback: out of bounds index=%u offset=%u size=%llu\n",
+                             resolved_ssbo_index, pattern.store_offset_bytes, (unsigned long long)ssbo_size_bytes);
       return false;
    }
 
    if (trace_this_dispatch) {
-      fprintf(stderr, "webvulkan fallback: ssbo=%u ptr=%p offset=%u value=0x%08x size=%llu\n",
-              resolved_ssbo_index, ssbo_ptr, pattern.store_offset_bytes, pattern.store_value,
-              (unsigned long long)ssbo_size_bytes);
-      fprintf(stderr, "webvulkan fallback: dispatch_mode=%s\n",
-              lp_webvulkan_dispatch_mode_name(dispatch_mode));
+      LP_WEBVULKAN_DEBUG_LOG("webvulkan fallback: ssbo=%u ptr=%p offset=%u value=0x%08x size=%llu\n",
+                             resolved_ssbo_index, ssbo_ptr, pattern.store_offset_bytes, pattern.store_value,
+                             (unsigned long long)ssbo_size_bytes);
+      LP_WEBVULKAN_DEBUG_LOG("webvulkan fallback: dispatch_mode=%s\n",
+                             lp_webvulkan_dispatch_mode_name(dispatch_mode));
    }
 
    lp_webvulkan_make_shader_key(shader, &shader_key_lo, &shader_key_hi);
@@ -674,7 +694,7 @@ lp_webvulkan_try_nir_wasm_dispatch(struct lp_cs_job_info *job_info,
    if (dispatch_mode == LP_WEBVULKAN_DISPATCH_MODE_RAW_LLVM_IR) {
       lp_webvulkan_mark_wasm_usage_with_provider(0, 0, "raw_llvm_ir");
       if (trace_this_dispatch)
-         fprintf(stderr, "webvulkan fallback: runtime mode=raw_llvm_ir\n");
+         LP_WEBVULKAN_DEBUG_LOG("webvulkan fallback: runtime mode=raw_llvm_ir\n");
       if (trace_this_dispatch)
          webvulkan_trace_once = true;
       return false;
@@ -696,7 +716,7 @@ lp_webvulkan_try_nir_wasm_dispatch(struct lp_cs_job_info *job_info,
          "fast_wasm_no_registry" : "raw_llvm_ir";
       lp_webvulkan_mark_wasm_usage_with_provider(0, 0, fallback_reason);
       if (trace_this_dispatch)
-         fprintf(stderr, "webvulkan fallback: no runtime wasm registry symbol\n");
+         LP_WEBVULKAN_DEBUG_LOG("webvulkan fallback: no runtime wasm registry symbol\n");
       if (trace_this_dispatch)
          webvulkan_trace_once = true;
       return false;
@@ -727,7 +747,7 @@ lp_webvulkan_try_nir_wasm_dispatch(struct lp_cs_job_info *job_info,
          "fast_wasm_no_module" : "raw_llvm_ir";
       lp_webvulkan_mark_wasm_usage_with_provider(0, 0, fallback_reason);
       if (trace_this_dispatch)
-         fprintf(stderr, "webvulkan fallback: runtime wasm module missing\n");
+         LP_WEBVULKAN_DEBUG_LOG("webvulkan fallback: runtime wasm module missing\n");
       if (trace_this_dispatch)
          webvulkan_trace_once = true;
       return false;
@@ -736,10 +756,11 @@ lp_webvulkan_try_nir_wasm_dispatch(struct lp_cs_job_info *job_info,
    runtime_module_provider = (lookup_provider && lookup_provider[0] != '\0') ? lookup_provider : "runtime-registry";
 
    if (trace_this_dispatch) {
-      fprintf(stderr,
-              "webvulkan fallback: shader_key=0x%08x%08x module_size=%u entrypoint=%s provider=%s\n",
-              shader_key_hi, shader_key_lo, runtime_module_size, runtime_module_entrypoint,
-              runtime_module_provider);
+      LP_WEBVULKAN_DEBUG_LOG(
+         "webvulkan fallback: shader_key=0x%08x%08x module_size=%u entrypoint=%s provider=%s\n",
+         shader_key_hi, shader_key_lo, runtime_module_size, runtime_module_entrypoint,
+         runtime_module_provider
+      );
    }
 
    int rc = lp_webvulkan_run_store_wasm_js(runtime_module_bytes,
@@ -749,16 +770,18 @@ lp_webvulkan_try_nir_wasm_dispatch(struct lp_cs_job_info *job_info,
                                            pattern.store_offset_bytes,
                                            pattern.store_value);
    if (rc < 0) {
-      fprintf(stderr, "webvulkan fallback: js execution failed rc=%d\n", rc);
+      LP_WEBVULKAN_DEBUG_LOG("webvulkan fallback: js execution failed rc=%d\n", rc);
       return false;
    }
    lp_webvulkan_mark_wasm_usage_with_provider(1, rc, runtime_module_provider);
    if (trace_this_dispatch) {
-      fprintf(stderr, "webvulkan fallback: active\n");
+      LP_WEBVULKAN_DEBUG_LOG("webvulkan fallback: active\n");
       webvulkan_trace_once = true;
    }
    return true;
 }
+
+#undef LP_WEBVULKAN_DEBUG_LOG
 #endif
 
 enum {
