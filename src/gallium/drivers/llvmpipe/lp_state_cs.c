@@ -94,6 +94,66 @@ struct lp_webvulkan_nir_store_pattern {
    uint32_t store_value;
 };
 
+extern bool
+webvulkan_runtime_lookup_wasm_module(uint32_t key_lo,
+                                     uint32_t key_hi,
+                                     const uint8_t **out_module_bytes,
+                                     uint32_t *out_module_size,
+                                     const char **out_entrypoint,
+                                     const char **out_provider) __attribute__((weak));
+
+extern void
+webvulkan_runtime_mark_wasm_usage(int used,
+                                  const char *provider) __attribute__((weak));
+
+extern void
+webvulkan_runtime_capture_shader_key(uint32_t key_lo,
+                                     uint32_t key_hi) __attribute__((weak));
+
+static void
+lp_webvulkan_make_shader_key(struct lp_compute_shader *shader,
+                             uint32_t *out_key_lo,
+                             uint32_t *out_key_hi)
+{
+   if (!shader) {
+      if (out_key_lo)
+         *out_key_lo = 0u;
+      if (out_key_hi)
+         *out_key_hi = 0u;
+      return;
+   }
+
+   if (!shader->webvulkan_runtime_key_initialized) {
+      const uint64_t fnv_offset_basis = UINT64_C(14695981039346656037);
+      const uint64_t fnv_prime = UINT64_C(1099511628211);
+      uint64_t hash = fnv_offset_basis;
+      const uint32_t stage_marker = 0x43530001u;
+      struct blob blob = {0};
+
+      for (unsigned byte = 0; byte < 4; ++byte) {
+         hash ^= (uint8_t)((stage_marker >> (byte * 8)) & 0xffu);
+         hash *= fnv_prime;
+      }
+
+      blob_init(&blob);
+      nir_serialize(&blob, shader->base.ir.nir, true);
+      for (size_t i = 0; i < blob.size; ++i) {
+         hash ^= ((const uint8_t *)blob.data)[i];
+         hash *= fnv_prime;
+      }
+      blob_finish(&blob);
+
+      shader->webvulkan_runtime_key_lo = (uint32_t)(hash & UINT64_C(0xffffffff));
+      shader->webvulkan_runtime_key_hi = (uint32_t)(hash >> 32);
+      shader->webvulkan_runtime_key_initialized = true;
+   }
+
+   if (out_key_lo)
+      *out_key_lo = shader->webvulkan_runtime_key_lo;
+   if (out_key_hi)
+      *out_key_hi = shader->webvulkan_runtime_key_hi;
+}
+
 static bool
 lp_webvulkan_extract_const_u32_from_def(nir_def *def, uint32_t *out_value)
 {
@@ -212,7 +272,13 @@ lp_webvulkan_extract_nir_store_pattern(nir_shader *nir,
    return true;
 }
 
-EM_JS(int, lp_webvulkan_run_store_wasm_js, (uint32_t dst_ptr, uint32_t store_offset_bytes, uint32_t store_value), {
+EM_JS(int, lp_webvulkan_run_store_wasm_js,
+      (const uint8_t *module_bytes,
+       uint32_t module_size,
+       const char *entrypoint_cstr,
+       uint32_t dst_ptr,
+       uint32_t store_offset_bytes,
+       uint32_t store_value), {
    function pushU32Leb(out, value) {
       let v = value >>> 0;
       do {
@@ -249,68 +315,70 @@ EM_JS(int, lp_webvulkan_run_store_wasm_js, (uint32_t dst_ptr, uint32_t store_off
       const memory = (typeof wasmMemory !== "undefined" && wasmMemory)
          ? wasmMemory
          : (typeof Module !== "undefined" ? Module["wasmMemory"] : null);
+      const moduleState = (typeof Module !== "undefined" && Module) ? Module : globalThis;
       if (!memory) {
          return -1;
       }
 
-      const injected = globalThis.__webvulkan_llvm_ir_store_wasm;
-      if (injected && injected.bytes) {
+      const entrypoint = entrypoint_cstr ? UTF8ToString(entrypoint_cstr) : "run";
+      if (module_bytes && module_size > 0) {
          try {
-            const entrypoint = typeof injected.entrypoint === "string" && injected.entrypoint.length > 0
-               ? injected.entrypoint
-               : "run";
-            if (!injected.module) {
-               const wasmBytes = injected.bytes instanceof Uint8Array
-                  ? injected.bytes
-                  : new Uint8Array(injected.bytes);
-               injected.module = new WebAssembly.Module(wasmBytes);
+            if (!moduleState.__webvulkan_runtime_module_cache) {
+               moduleState.__webvulkan_runtime_module_cache = Object.create(null);
             }
-            let instance;
-            try {
-               instance = new WebAssembly.Instance(injected.module, { env: { memory } });
-            } catch (instanceError) {
-               const errorText = String(instanceError);
-               if (!errorText.includes("mismatch in shared state of memory")) {
-                  throw instanceError;
-               }
+            const cacheKey = `${module_bytes >>> 0}:${module_size >>> 0}:${entrypoint}`;
+            let cached = moduleState.__webvulkan_runtime_module_cache[cacheKey];
 
-               if (!injected.sharedMemory) {
-                  injected.sharedMemory = new WebAssembly.Memory({
-                     initial: 2,
-                     maximum: 65536,
-                     shared: true
-                  });
-               }
-               instance = new WebAssembly.Instance(injected.module, { env: { memory: injected.sharedMemory } });
-               const runFnShared = instance.exports[entrypoint];
-               if (typeof runFnShared !== "function") {
-                  return -12;
-               }
-               runFnShared(0, (store_offset_bytes >>> 0), (store_value >>> 0));
+            if (!cached) {
+               const wasmBytes = HEAPU8.slice(module_bytes, module_bytes + module_size);
+               const module = new WebAssembly.Module(wasmBytes);
+               try {
+                  const instance = new WebAssembly.Instance(module, { env: { memory } });
+                  const runFn = instance.exports[entrypoint];
+                  if (typeof runFn !== "function") {
+                     return -12;
+                  }
+                  cached = { mode: 0, runFn };
+               } catch (instanceError) {
+                  const errorText = String(instanceError);
+                  if (!errorText.includes("mismatch in shared state of memory")) {
+                     throw instanceError;
+                  }
 
+                  if (!moduleState.__webvulkan_shared_memory_shim) {
+                     moduleState.__webvulkan_shared_memory_shim = new WebAssembly.Memory({
+                        initial: 2,
+                        maximum: 65536,
+                        shared: true
+                     });
+                  }
+                  const sharedMemory = moduleState.__webvulkan_shared_memory_shim;
+                  const instance = new WebAssembly.Instance(module, { env: { memory: sharedMemory } });
+                  const runFnShared = instance.exports[entrypoint];
+                  if (typeof runFnShared !== "function") {
+                     return -12;
+                  }
+                  cached = { mode: 1, runFn: runFnShared, sharedMemory };
+               }
+               moduleState.__webvulkan_runtime_module_cache[cacheKey] = cached;
+            }
+
+            if (cached.mode === 1) {
+               cached.runFn(0, (store_offset_bytes >>> 0), (store_value >>> 0));
                const srcOffset = store_offset_bytes >>> 0;
                const dstOffset = (dst_ptr + store_offset_bytes) >>> 0;
-               const srcBytes = new Uint8Array(injected.sharedMemory.buffer, srcOffset, 4);
+               const srcBytes = new Uint8Array(cached.sharedMemory.buffer, srcOffset, 4);
                HEAPU8[dstOffset + 0] = srcBytes[0];
                HEAPU8[dstOffset + 1] = srcBytes[1];
                HEAPU8[dstOffset + 2] = srcBytes[2];
                HEAPU8[dstOffset + 3] = srcBytes[3];
-
-               globalThis.__webvulkan_llvm_ir_store_wasm_used = true;
-               globalThis.__webvulkan_llvm_ir_store_wasm_provider = `${injected.provider || "unknown"}+shared-memory-shim`;
-               return 0;
+               return 2;
             }
 
-            const runFn = instance.exports[entrypoint];
-            if (typeof runFn !== "function") {
-               return -12;
-            }
-            runFn((dst_ptr >>> 0), (store_offset_bytes >>> 0), (store_value >>> 0));
-            globalThis.__webvulkan_llvm_ir_store_wasm_used = true;
-            globalThis.__webvulkan_llvm_ir_store_wasm_provider = injected.provider || "unknown";
+            cached.runFn((dst_ptr >>> 0), (store_offset_bytes >>> 0), (store_value >>> 0));
             return 0;
          } catch (e) {
-            console.error("lp_webvulkan_run_store_wasm_js injected module", e);
+            console.error("lp_webvulkan_run_store_wasm_js registry module", e);
             return -13;
          }
       }
@@ -381,6 +449,9 @@ static bool
 lp_webvulkan_try_nir_wasm_dispatch(struct lp_cs_job_info *job_info,
                                    struct lp_compute_shader *shader)
 {
+   static bool webvulkan_trace_once = false;
+   const bool trace_this_dispatch = !webvulkan_trace_once;
+
    if (!job_info || !shader || !shader->base.ir.nir) {
       fprintf(stderr, "webvulkan fallback: no shader nir\n");
       return false;
@@ -396,6 +467,12 @@ lp_webvulkan_try_nir_wasm_dispatch(struct lp_cs_job_info *job_info,
    const uint32_t *ssbo_ptr = NULL;
    uint64_t ssbo_size_bytes = 0;
    uint32_t resolved_ssbo_index = UINT32_MAX;
+   uint32_t shader_key_lo = 0;
+   uint32_t shader_key_hi = 0;
+   const uint8_t *runtime_module_bytes = NULL;
+   uint32_t runtime_module_size = 0;
+   const char *runtime_module_entrypoint = "run";
+   const char *runtime_module_provider = "inline-wasm-module";
 
    if (pattern.ssbo_index != UINT32_MAX) {
       if (pattern.ssbo_index >= LP_MAX_TGSI_SHADER_BUFFERS) {
@@ -455,18 +532,63 @@ lp_webvulkan_try_nir_wasm_dispatch(struct lp_cs_job_info *job_info,
       return false;
    }
 
-   fprintf(stderr, "webvulkan fallback: ssbo=%u ptr=%p offset=%u value=0x%08x size=%llu\n",
-           resolved_ssbo_index, ssbo_ptr, pattern.store_offset_bytes, pattern.store_value,
-           (unsigned long long)ssbo_size_bytes);
+   if (trace_this_dispatch) {
+      fprintf(stderr, "webvulkan fallback: ssbo=%u ptr=%p offset=%u value=0x%08x size=%llu\n",
+              resolved_ssbo_index, ssbo_ptr, pattern.store_offset_bytes, pattern.store_value,
+              (unsigned long long)ssbo_size_bytes);
+   }
 
-   int rc = lp_webvulkan_run_store_wasm_js((uint32_t)(uintptr_t)ssbo_ptr,
+   lp_webvulkan_make_shader_key(shader, &shader_key_lo, &shader_key_hi);
+   if (webvulkan_runtime_capture_shader_key) {
+      webvulkan_runtime_capture_shader_key(shader_key_lo, shader_key_hi);
+   }
+   if (webvulkan_runtime_lookup_wasm_module) {
+      const char *lookup_entrypoint = NULL;
+      const char *lookup_provider = NULL;
+      if (webvulkan_runtime_lookup_wasm_module(shader_key_lo,
+                                               shader_key_hi,
+                                               &runtime_module_bytes,
+                                               &runtime_module_size,
+                                               &lookup_entrypoint,
+                                               &lookup_provider)) {
+         if (lookup_entrypoint && lookup_entrypoint[0] != '\0')
+            runtime_module_entrypoint = lookup_entrypoint;
+         if (lookup_provider && lookup_provider[0] != '\0')
+            runtime_module_provider = lookup_provider;
+      }
+   }
+
+   if (trace_this_dispatch) {
+      fprintf(stderr,
+              "webvulkan fallback: shader_key=0x%08x%08x module_size=%u entrypoint=%s provider=%s\n",
+              shader_key_hi, shader_key_lo, runtime_module_size, runtime_module_entrypoint,
+              runtime_module_provider);
+   }
+
+   int rc = lp_webvulkan_run_store_wasm_js(runtime_module_bytes,
+                                           runtime_module_size,
+                                           runtime_module_entrypoint,
+                                           (uint32_t)(uintptr_t)ssbo_ptr,
                                            pattern.store_offset_bytes,
                                            pattern.store_value);
-   if (rc != 0) {
+   if (rc < 0) {
       fprintf(stderr, "webvulkan fallback: js execution failed rc=%d\n", rc);
       return false;
    }
-   fprintf(stderr, "webvulkan fallback: active\n");
+   if (webvulkan_runtime_mark_wasm_usage) {
+      if (rc == 2) {
+         char provider_with_mode[192];
+         snprintf(provider_with_mode, sizeof(provider_with_mode),
+                  "%s+shared-memory-shim", runtime_module_provider);
+         webvulkan_runtime_mark_wasm_usage(1, provider_with_mode);
+      } else {
+         webvulkan_runtime_mark_wasm_usage(1, runtime_module_provider);
+      }
+   }
+   if (trace_this_dispatch) {
+      fprintf(stderr, "webvulkan fallback: active\n");
+      webvulkan_trace_once = true;
+   }
    return true;
 }
 

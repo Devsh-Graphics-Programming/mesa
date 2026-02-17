@@ -122,6 +122,9 @@ struct lp_compute_shader {
    unsigned variants_created;
    unsigned variants_cached;
    bool zero_initialize_shared_memory;
+   bool webvulkan_runtime_key_initialized;
+   uint32_t webvulkan_runtime_key_lo;
+   uint32_t webvulkan_runtime_key_hi;
 
    int max_global_buffers;
    struct pipe_resource **global_buffers;
