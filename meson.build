@@ -1154,10 +1154,14 @@ elif host_machine.system() == 'windows'
       '-D_SCL_SECURE_NO_WARNINGS',
       '-D_SCL_SECURE_NO_DEPRECATE',
       '-D_ALLOW_KEYWORD_MACROS',
-      '-D_HAS_EXCEPTIONS=0', # Tell C++ STL to not use exceptions
       '-DNOMINMAX',
       '-D_UCRT_NOISY_NAN', # https://developercommunity.visualstudio.com/t/NAN-is-no-longer-compile-time-constant-i/10688907?viewtype=all
     ]
+    if not get_option('llvm-orcjit')
+      pre_args += [
+        '-D_HAS_EXCEPTIONS=0', # Tell C++ STL to not use exceptions
+      ]
+    endif
   else
     # MINGW also accept _GNU_SOURCE
     pre_args += '-D_GNU_SOURCE'
