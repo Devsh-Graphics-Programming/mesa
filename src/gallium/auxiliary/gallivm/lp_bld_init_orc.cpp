@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <unordered_set>
 #include <cstdlib>
 #include "lp_bld.h"
 #include "lp_bld_debug.h"
@@ -182,7 +183,9 @@ public:
       LPJit* jit = get_instance();
       std::lock_guard<std::mutex> guard(jit->lookup_mutex);
       JITDylib& tmp = ExitOnErr(jit->lljit->createJITDylib(name));
-      return wrap(&tmp);
+      LLVMOrcJITDylibRef jd = wrap(&tmp);
+      jit->live_jd_handles.insert(jd);
+      return jd;
    }
 
    static void register_gallivm_state(gallivm_state *gallivm) {
@@ -206,10 +209,17 @@ public:
       using llvm::Module;
       using llvm::orc::ThreadSafeModule;
       using llvm::orc::JITDylib;
+      if (!jd) {
+         return;
+      }
       ThreadSafeModule tsm(
          std::unique_ptr<Module>(llvm::unwrap(mod)), *::unwrap(ts_context));
       LPJit* jit = get_instance();
       std::lock_guard<std::mutex> guard(jit->lookup_mutex);
+      if (!jit->live_jd_handles.count(jd)) {
+         debug_printf("ORCJIT skip addIRModule for unknown JITDylib handle %p\n", jd);
+         return;
+      }
       ExitOnErr(jit->lljit->addIRModule(
          *::unwrap(jd), std::move(tsm)
       ));
@@ -229,9 +239,16 @@ public:
       using llvm::orc::ExecutionSession;
       using llvm::orc::JITDylib;
       using llvm::orc::SymbolMap;
+      if (!sym || !addr || !jd) {
+         return;
+      }
       JITDylib* JD = ::unwrap(jd);
       LPJit* jit = LPJit::get_instance();
       std::lock_guard<std::mutex> guard(jit->lookup_mutex);
+      if (!jit->live_jd_handles.count(jd)) {
+         debug_printf("ORCJIT skip addMapping for unknown JITDylib handle %p\n", jd);
+         return;
+      }
       auto& es = jit->lljit->getExecutionSession();
       auto name = es.intern(llvm::unwrap(sym)->getName());
       SymbolMap map(1);
@@ -251,6 +268,9 @@ public:
       using llvm::orc::JITDylib;
       using llvm::JITEvaluatedSymbol;
       using llvm::orc::ExecutorAddr;
+      if (!func_name || !jd) {
+         return nullptr;
+      }
       JITDylib* JD = ::unwrap(jd);
       LPJit* jit = get_instance();
       llvm::ObjectCache *objcache = nullptr;
@@ -258,6 +278,10 @@ public:
       auto &irc = ircl.getCompiler();
       auto &sc = dynamic_cast<llvm::orc::SimpleCompiler &>(irc);
       std::lock_guard<std::mutex> guard(jit->lookup_mutex);
+      if (!jit->live_jd_handles.count(jd)) {
+         debug_printf("ORCJIT skip lookup for unknown JITDylib handle %p (%s)\n", jd, func_name);
+         return nullptr;
+      }
       if (gallivm && gallivm->cache) {
          objcache = (LPObjectCacheORC *)gallivm->cache->jit_obj_cache;
       }
@@ -280,6 +304,10 @@ public:
       using llvm::orc::JITDylib;
       LPJit* jit = LPJit::get_instance();
       std::lock_guard<std::mutex> guard(jit->lookup_mutex);
+      if (!jit->live_jd_handles.count(jd)) {
+         return;
+      }
+      jit->live_jd_handles.erase(jd);
       auto& es = jit->lljit->getExecutionSession();
       ExitOnErr(es.removeJITDylib(* ::unwrap(jd)));
 #endif
@@ -314,6 +342,7 @@ private:
    unsigned jit_dylib_count;
 
    std::mutex lookup_mutex;
+   std::unordered_set<LLVMOrcJITDylibRef> live_jd_handles;
 
 #if DEBUG
    /* map from module name to gallivm_state */
