@@ -232,15 +232,29 @@ clone_string(clone_state *state, const char *string)
    if (!string)
       return NULL;
 
+   if (state->remap_table) {
+      struct hash_entry *entry = _mesa_hash_table_search(state->remap_table, string);
+      if (entry)
+         return entry->data;
+   }
+
+   char *cloned = NULL;
+
+#if defined(_WIN32) && defined(_MSC_VER)
+   __try {
+      cloned = ralloc_strdup(state->ns, string);
+   } __except(1) {
+      cloned = NULL;
+   }
+#else
+   cloned = ralloc_strdup(state->ns, string);
+#endif
+
    if (!state->remap_table)
-      return ralloc_strdup(state->ns, string);
+      return cloned;
 
-   struct hash_entry *entry = _mesa_hash_table_search(state->remap_table, string);
-   if (entry)
-      return entry->data;
-
-   char *cloned = ralloc_strdup(state->ns, string);
-   _mesa_hash_table_insert(state->remap_table, string, cloned);
+   if (cloned)
+      _mesa_hash_table_insert(state->remap_table, string, cloned);
    return cloned;
 }
 
