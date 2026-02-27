@@ -57,17 +57,17 @@
 /* conflict with ObjectLinkingLayer.h */
 #include "util/u_memory.h"
 
-#if DETECT_ARCH_RISCV64 == 1 || DETECT_ARCH_RISCV32 == 1 || DETECT_ARCH_LOONGARCH64 == 1 || (defined(_WIN32) && LLVM_VERSION_MAJOR >= 15)
-/* use ObjectLinkingLayer (JITLINK backend) */
-#define USE_JITLINK
-#endif
-/* else use old RTDyldObjectLinkingLayer (RuntimeDyld backend) */
-
 #if defined(_WIN32) && LLVM_VERSION_MAJOR >= 21
 #define LP_ORCJIT_WIN21_STABILITY_MODE 1
 #else
 #define LP_ORCJIT_WIN21_STABILITY_MODE 0
 #endif
+
+#if DETECT_ARCH_RISCV64 == 1 || DETECT_ARCH_RISCV32 == 1 || DETECT_ARCH_LOONGARCH64 == 1 || (defined(_WIN32) && LLVM_VERSION_MAJOR >= 15 && !LP_ORCJIT_WIN21_STABILITY_MODE)
+/* use ObjectLinkingLayer (JITLINK backend) */
+#define USE_JITLINK
+#endif
+/* else use old RTDyldObjectLinkingLayer (RuntimeDyld backend) */
 
 namespace {
 
