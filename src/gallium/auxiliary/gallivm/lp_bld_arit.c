@@ -65,6 +65,12 @@
 #include "lp_bld_arit.h"
 #include "lp_bld_flow.h"
 
+#if defined(_WIN32) && LLVM_VERSION_MAJOR >= 21
+#define LP_AVOID_X86_AVX_MINMAX_INTRINSICS 1
+#else
+#define LP_AVOID_X86_AVX_MINMAX_INTRINSICS 0
+#endif
+
 #if DETECT_ARCH_SSE
 #include <xmmintrin.h>
 #endif
@@ -110,7 +116,8 @@ lp_build_min_simple(struct lp_build_context *bld,
             intrinsic = "llvm.x86.sse.min.ss";
             intr_size = 128;
          }
-         else if (type.length <= 4 || !util_get_cpu_caps()->has_avx) {
+         else if (type.length <= 4 || !util_get_cpu_caps()->has_avx ||
+                  LP_AVOID_X86_AVX_MINMAX_INTRINSICS) {
             intrinsic = "llvm.x86.sse.min.ps";
             intr_size = 128;
          }
@@ -124,7 +131,8 @@ lp_build_min_simple(struct lp_build_context *bld,
             intrinsic = "llvm.x86.sse2.min.sd";
             intr_size = 128;
          }
-         else if (type.length == 2 || !util_get_cpu_caps()->has_avx) {
+         else if (type.length == 2 || !util_get_cpu_caps()->has_avx ||
+                  LP_AVOID_X86_AVX_MINMAX_INTRINSICS) {
             intrinsic = "llvm.x86.sse2.min.pd";
             intr_size = 128;
          }
@@ -264,7 +272,8 @@ lp_build_max_simple(struct lp_build_context *bld,
             intrinsic = "llvm.x86.sse.max.ss";
             intr_size = 128;
          }
-         else if (type.length <= 4 || !util_get_cpu_caps()->has_avx) {
+         else if (type.length <= 4 || !util_get_cpu_caps()->has_avx ||
+                  LP_AVOID_X86_AVX_MINMAX_INTRINSICS) {
             intrinsic = "llvm.x86.sse.max.ps";
             intr_size = 128;
          }
@@ -278,7 +287,8 @@ lp_build_max_simple(struct lp_build_context *bld,
             intrinsic = "llvm.x86.sse2.max.sd";
             intr_size = 128;
          }
-         else if (type.length == 2 || !util_get_cpu_caps()->has_avx) {
+         else if (type.length == 2 || !util_get_cpu_caps()->has_avx ||
+                  LP_AVOID_X86_AVX_MINMAX_INTRINSICS) {
             intrinsic = "llvm.x86.sse2.max.pd";
             intr_size = 128;
          }

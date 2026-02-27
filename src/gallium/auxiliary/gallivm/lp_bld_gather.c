@@ -37,6 +37,12 @@
 #include "lp_bld_intr.h"
 #include "lp_bld_pack.h"
 
+#if defined(_WIN32) && LLVM_VERSION_MAJOR >= 21
+#define LP_AVOID_AVX2_GATHER_INTRINSICS 1
+#else
+#define LP_AVOID_AVX2_GATHER_INTRINSICS 0
+#endif
+
 
 /**
  * Get the pointer to one element from scatter positions in memory.
@@ -485,7 +491,8 @@ lp_build_gather(struct gallivm_state *gallivm,
        * 32bit/64bit fetches you're doing it wrong (this is gather, not
        * conversion) and it would be awkward for floats.
        */
-   } else if (util_get_cpu_caps()->has_avx2 && !need_expansion &&
+   } else if (!LP_AVOID_AVX2_GATHER_INTRINSICS &&
+              util_get_cpu_caps()->has_avx2 && !need_expansion &&
               src_width == 32 && (length == 4 || length == 8)) {
       return lp_build_gather_avx2(gallivm, length, src_width, dst_type,
                                   base_ptr, offsets);
