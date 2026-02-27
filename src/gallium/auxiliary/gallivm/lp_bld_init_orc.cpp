@@ -62,6 +62,12 @@
 #endif
 /* else use old RTDyldObjectLinkingLayer (RuntimeDyld backend) */
 
+#if defined(_WIN32) && LLVM_VERSION_MAJOR >= 21
+#define LP_ORCJIT_WIN21_STABILITY_MODE 1
+#else
+#define LP_ORCJIT_WIN21_STABILITY_MODE 0
+#endif
+
 namespace {
 
 class LPObjectCacheORC : public llvm::ObjectCache {
@@ -266,12 +272,17 @@ public:
    }
 
    static void remove_jd(LLVMOrcJITDylibRef jd) {
+#if LP_ORCJIT_WIN21_STABILITY_MODE
+      (void)jd;
+      return;
+#else
       using llvm::orc::ExecutionSession;
       using llvm::orc::JITDylib;
       LPJit* jit = LPJit::get_instance();
       std::lock_guard<std::mutex> guard(jit->lookup_mutex);
       auto& es = jit->lljit->getExecutionSession();
       ExitOnErr(es.removeJITDylib(* ::unwrap(jd)));
+#endif
    }
 
    static std::mutex& get_lookup_mutex() {
@@ -559,6 +570,11 @@ bool
 lp_build_init(void)
 {
    (void)LPJit::get_instance();
+#if LP_ORCJIT_WIN21_STABILITY_MODE
+   if (gallivm_debug & (GALLIVM_DEBUG_IR | GALLIVM_DEBUG_ASM | GALLIVM_DEBUG_DUMP_BC)) {
+      debug_printf("ORCJIT stability mode enabled: disable object cache and JITDylib removal on Windows LLVM 21+\n");
+   }
+#endif
    return true;
 }
 
@@ -697,10 +713,14 @@ gallivm_compile_module(struct gallivm_state *gallivm)
    gallivm->module = nullptr;
 
    if (gallivm->cache) {
+#if LP_ORCJIT_WIN21_STABILITY_MODE
+      gallivm->cache->jit_obj_cache = nullptr;
+#else
       if (!gallivm->cache->jit_obj_cache) {
          LPObjectCacheORC *objcache = new LPObjectCacheORC(gallivm->cache);
          gallivm->cache->jit_obj_cache = (void *)objcache;
       }
+#endif
    }
    /* defer compilation till first lookup by gallivm_jit_function */
 }
