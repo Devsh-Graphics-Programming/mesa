@@ -241,16 +241,20 @@ public:
    static void *lookup_in_jd(
          const char *func_name,
          LLVMOrcJITDylibRef jd,
-         llvm::ObjectCache *objcache) {
+         struct gallivm_state *gallivm) {
       using llvm::orc::JITDylib;
       using llvm::JITEvaluatedSymbol;
       using llvm::orc::ExecutorAddr;
       JITDylib* JD = ::unwrap(jd);
       LPJit* jit = get_instance();
+      llvm::ObjectCache *objcache = nullptr;
       auto &ircl = jit->lljit->getIRCompileLayer();
       auto &irc = ircl.getCompiler();
       auto &sc = dynamic_cast<llvm::orc::SimpleCompiler &>(irc);
       std::lock_guard<std::mutex> guard(jit->lookup_mutex);
+      if (gallivm && gallivm->cache) {
+         objcache = (LPObjectCacheORC *)gallivm->cache->jit_obj_cache;
+      }
       sc.setObjectCache(objcache);
       auto func = ExitOnErr(jit->lljit->lookup(*JD, func_name));
       sc.setObjectCache(nullptr);
@@ -268,6 +272,10 @@ public:
       std::lock_guard<std::mutex> guard(jit->lookup_mutex);
       auto& es = jit->lljit->getExecutionSession();
       ExitOnErr(es.removeJITDylib(* ::unwrap(jd)));
+   }
+
+   static std::mutex& get_lookup_mutex() {
+      return get_instance()->lookup_mutex;
    }
 
    LLVMTargetMachineRef tm;
@@ -615,6 +623,8 @@ gallivm_destroy(struct gallivm_state *gallivm)
 void
 gallivm_free_ir(struct gallivm_state *gallivm)
 {
+   std::lock_guard<std::mutex> guard(LPJit::get_lookup_mutex());
+
    if (gallivm->module)
       LLVMDisposeModule(gallivm->module);
    FREE(gallivm->module_name);
@@ -699,14 +709,8 @@ func_pointer
 gallivm_jit_function(struct gallivm_state *gallivm,
                      LLVMValueRef func, const char *func_name)
 {
-   LPObjectCacheORC *objcache = NULL;
-   if (gallivm->cache) {
-      assert(gallivm->cache->jit_obj_cache);
-      objcache = (LPObjectCacheORC *)gallivm->cache->jit_obj_cache;
-   }
-
    return pointer_to_func(
-      LPJit::lookup_in_jd(func_name, gallivm->_per_module_jd, objcache));
+      LPJit::lookup_in_jd(func_name, gallivm->_per_module_jd, gallivm));
 }
 
 void
