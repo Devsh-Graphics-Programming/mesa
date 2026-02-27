@@ -164,6 +164,7 @@ public:
       if (!name_uniq) {
          return NULL;
       }
+      std::lock_guard<std::mutex> guard(jit->lookup_mutex);
       do {
          snprintf(name_uniq, size, "%s_%u", name, jit->jit_dylib_count++);
       } while(jit->lljit->getExecutionSession().getJITDylibByName(name_uniq));
@@ -173,6 +174,7 @@ public:
    static LLVMOrcJITDylibRef create_jit_dylib(const char * name) {
       using llvm::orc::JITDylib;
       LPJit* jit = get_instance();
+      std::lock_guard<std::mutex> guard(jit->lookup_mutex);
       JITDylib& tmp = ExitOnErr(jit->lljit->createJITDylib(name));
       return wrap(&tmp);
    }
@@ -200,7 +202,9 @@ public:
       using llvm::orc::JITDylib;
       ThreadSafeModule tsm(
          std::unique_ptr<Module>(llvm::unwrap(mod)), *::unwrap(ts_context));
-      ExitOnErr(get_instance()->lljit->addIRModule(
+      LPJit* jit = get_instance();
+      std::lock_guard<std::mutex> guard(jit->lookup_mutex);
+      ExitOnErr(jit->lljit->addIRModule(
          *::unwrap(jd), std::move(tsm)
       ));
    }
@@ -220,7 +224,9 @@ public:
       using llvm::orc::JITDylib;
       using llvm::orc::SymbolMap;
       JITDylib* JD = ::unwrap(jd);
-      auto& es = LPJit::get_instance()->lljit->getExecutionSession();
+      LPJit* jit = LPJit::get_instance();
+      std::lock_guard<std::mutex> guard(jit->lookup_mutex);
+      auto& es = jit->lljit->getExecutionSession();
       auto name = es.intern(llvm::unwrap(sym)->getName());
       SymbolMap map(1);
 #if LLVM_VERSION_MAJOR >= 17
@@ -244,10 +250,10 @@ public:
       auto &ircl = jit->lljit->getIRCompileLayer();
       auto &irc = ircl.getCompiler();
       auto &sc = dynamic_cast<llvm::orc::SimpleCompiler &>(irc);
-      jit->lookup_mutex.lock();
+      std::lock_guard<std::mutex> guard(jit->lookup_mutex);
       sc.setObjectCache(objcache);
       auto func = ExitOnErr(jit->lljit->lookup(*JD, func_name));
-      jit->lookup_mutex.unlock();
+      sc.setObjectCache(nullptr);
 #if LLVM_VERSION_MAJOR >= 15
       return func.toPtr<void *>();
 #else
@@ -258,7 +264,9 @@ public:
    static void remove_jd(LLVMOrcJITDylibRef jd) {
       using llvm::orc::ExecutionSession;
       using llvm::orc::JITDylib;
-      auto& es = LPJit::get_instance()->lljit->getExecutionSession();
+      LPJit* jit = LPJit::get_instance();
+      std::lock_guard<std::mutex> guard(jit->lookup_mutex);
+      auto& es = jit->lljit->getExecutionSession();
       ExitOnErr(es.removeJITDylib(* ::unwrap(jd)));
    }
 
