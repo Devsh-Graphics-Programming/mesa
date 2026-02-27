@@ -1123,19 +1123,15 @@ anv_cmd_buffer_end_batch_buffer(struct anv_cmd_buffer *cmd_buffer)
    cmd_buffer->total_batch_size += batch_bo->length;
 }
 
-static VkResult
-anv_cmd_buffer_add_seen_bbos(struct anv_cmd_buffer *cmd_buffer,
-                             struct list_head *list)
+static void
+anv_cmd_buffer_add_seen_bbos(struct anv_cmd_buffer *primary,
+                             struct anv_cmd_buffer *secondary)
 {
-   list_for_each_entry(struct anv_batch_bo, bbo, list, link) {
-      struct anv_batch_bo **bbo_ptr = u_vector_add(&cmd_buffer->seen_bbos);
-      if (bbo_ptr == NULL)
-         return vk_error(cmd_buffer, VK_ERROR_OUT_OF_HOST_MEMORY);
-
-      *bbo_ptr = bbo;
+   struct anv_batch_bo **bbo;
+   u_vector_foreach(bbo, &secondary->seen_bbos) {
+      struct anv_batch_bo **bbo_ptr = u_vector_add(&primary->seen_bbos);
+      *bbo_ptr = *bbo;
    }
-
-   return VK_SUCCESS;
 }
 
 void
@@ -1164,7 +1160,7 @@ anv_cmd_buffer_add_secondary(struct anv_cmd_buffer *primary,
        */
       anv_batch_bo_link(primary, last_bbo, this_bbo, offset);
 
-      anv_cmd_buffer_add_seen_bbos(primary, &secondary->batch_bos);
+      anv_cmd_buffer_add_seen_bbos(primary, secondary);
       break;
    }
    case ANV_CMD_BUFFER_EXEC_MODE_COPY_AND_CHAIN: {
@@ -1172,10 +1168,20 @@ anv_cmd_buffer_add_secondary(struct anv_cmd_buffer *primary,
       VkResult result = anv_batch_bo_list_clone(&secondary->batch_bos,
                                                 secondary,
                                                 &copy_list);
-      if (result != VK_SUCCESS)
+      if (result != VK_SUCCESS) {
+         anv_batch_set_error(&primary->batch, result);
          return; /* FIXME */
+      }
 
-      anv_cmd_buffer_add_seen_bbos(primary, &copy_list);
+      list_for_each_entry(struct anv_batch_bo, bbo, &copy_list, link) {
+         struct anv_batch_bo **bbo_ptr = u_vector_add(&primary->seen_bbos);
+         if (bbo_ptr == NULL) {
+            anv_batch_set_error(&primary->batch,
+                                VK_ERROR_OUT_OF_HOST_MEMORY);
+            return;
+         }
+         *bbo_ptr = bbo;
+      }
 
       struct anv_batch_bo *first_bbo =
          list_first_entry(&copy_list, struct anv_batch_bo, link);
@@ -1200,7 +1206,7 @@ anv_cmd_buffer_add_secondary(struct anv_cmd_buffer *primary,
          (struct anv_address) { .bo = first_bbo->bo },
          secondary->return_addr);
 
-      anv_cmd_buffer_add_seen_bbos(primary, &secondary->batch_bos);
+      anv_cmd_buffer_add_seen_bbos(primary, secondary);
       break;
    }
    default:
@@ -1335,6 +1341,16 @@ anv_queue_exec_locked(struct anv_queue *queue,
    struct anv_device *device = queue->device;
    VkResult result = VK_SUCCESS;
 
+#if ANV_SUPPORT_RT
+   /* The application could begin resetting command buffers before the
+    * submission thread actually reaches anv_dump_bvh_to_files, so we
+    * have to steal the BVH dump list earlier while we're still certain
+    * the command buffer is in the pending state.
+    */
+   struct list_head bvh_dumps;
+   anv_get_pending_bvh_dumps(&bvh_dumps, cmd_buffer_count, cmd_buffers);
+#endif
+
    /* We only need to synchronize the main & companion command buffers if we
     * have a companion command buffer somewhere in the list of command
     * buffers.
@@ -1360,6 +1376,11 @@ anv_queue_exec_locked(struct anv_queue *queue,
          perf_query_pool,
          perf_query_pass,
          utrace_submit);
+
+#if ANV_SUPPORT_RT
+   anv_dump_bvh_to_files(queue->device, &bvh_dumps);
+#endif
+
    if (result != VK_SUCCESS)
       return result;
 

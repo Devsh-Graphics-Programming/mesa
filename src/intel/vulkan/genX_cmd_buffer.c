@@ -3994,7 +3994,12 @@ anv_pipe_invalidate_bits_for_access_flags(struct anv_cmd_buffer *cmd_buffer,
          }
          break;
       case VK_ACCESS_2_DESCRIPTOR_BUFFER_READ_BIT_EXT:
-         pipe_bits |= ANV_PIPE_STATE_CACHE_INVALIDATE_BIT;
+         /* Invalidate the state cache (when HW reads RENDER_SURFACE_STATE &
+          * SAMPLER_STATE) and the constant cache (when shaders read the
+          * descriptor buffers)
+          */
+         pipe_bits |= ANV_PIPE_STATE_CACHE_INVALIDATE_BIT |
+                      ANV_PIPE_CONSTANT_CACHE_INVALIDATE_BIT;
          break;
       default:
          break; /* Nothing to do */
@@ -4867,7 +4872,11 @@ genX(flush_pipeline_select)(struct anv_cmd_buffer *cmd_buffer,
     */
    bits |= ANV_PIPE_CS_STALL_BIT | ANV_PIPE_HDC_PIPELINE_FLUSH_BIT;
 
-   if (cmd_buffer->state.current_pipeline == _3D) {
+   if (cmd_buffer->state.current_pipeline == UINT32_MAX) {
+       bits |= ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT |
+               ANV_PIPE_DEPTH_CACHE_FLUSH_BIT |
+               ANV_PIPE_UNTYPED_DATAPORT_CACHE_FLUSH_BIT;
+   } else if (cmd_buffer->state.current_pipeline == _3D) {
       bits |= ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT |
               ANV_PIPE_DEPTH_CACHE_FLUSH_BIT;
    } else {
@@ -5265,8 +5274,12 @@ cmd_buffer_emit_depth_stencil(struct anv_cmd_buffer *cmd_buffer)
 
       info.depth_surf = &depth_surface->isl;
       info.depth_address = anv_address_physical(depth_address);
+
+      isl_surf_usage_flags_t isl_usage = ISL_SURF_USAGE_DEPTH_BIT;
+      if (anv_image_is_protected(image))
+         isl_usage |= ISL_SURF_USAGE_PROTECTED_BIT;
       info.mocs =
-         anv_mocs(device, depth_address.bo, ISL_SURF_USAGE_DEPTH_BIT);
+         anv_mocs(device, depth_address.bo, isl_usage);
 
       info.hiz_usage = gfx->depth_att.aux_usage;
       if (info.hiz_usage != ISL_AUX_USAGE_NONE) {
@@ -5303,8 +5316,12 @@ cmd_buffer_emit_depth_stencil(struct anv_cmd_buffer *cmd_buffer)
 
       info.stencil_aux_usage = image->planes[stencil_plane].aux_usage;
       info.stencil_address = anv_address_physical(stencil_address);
+
+      isl_surf_usage_flags_t isl_usage = ISL_SURF_USAGE_STENCIL_BIT;
+      if (anv_image_is_protected(image))
+         isl_usage |= ISL_SURF_USAGE_PROTECTED_BIT;
       info.mocs =
-         anv_mocs(device, stencil_address.bo, ISL_SURF_USAGE_STENCIL_BIT);
+         anv_mocs(device, stencil_address.bo, isl_usage);
    }
 
    isl_emit_depth_stencil_hiz_s(&device->isl_dev, dw, &info);
