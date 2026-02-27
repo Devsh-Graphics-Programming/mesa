@@ -399,8 +399,12 @@ llvm::orc::JITTargetMachineBuilder LPJit::create_jtdb() {
     * LLVM 3.1+ haven't more "extern unsigned llvm::StackAlignmentOverride" and
     * friends for configuring code generation options, like stack alignment.
     */
-#if DETECT_ARCH_X86 == 1 && LLVM_VERSION_MAJOR < 13
+#if LLVM_VERSION_MAJOR < 13
+#if DETECT_ARCH_X86 == 1
    options.StackAlignmentOverride = 4;
+#elif DETECT_ARCH_X86_64 == 1
+   options.StackAlignmentOverride = 32;
+#endif
 #endif
 
 #if DETECT_ARCH_RISCV64 == 1
@@ -563,6 +567,8 @@ init_gallivm_state(struct gallivm_state *gallivm, const char *name,
                                                        gallivm->context);
 #if DETECT_ARCH_X86 == 1
    lp_set_module_stack_alignment_override(gallivm->module, 4);
+#elif DETECT_ARCH_X86_64 == 1
+   lp_set_module_stack_alignment_override(gallivm->module, 32);
 #endif
    gallivm->builder = LLVMCreateBuilderInContext(gallivm->context);
    gallivm->_per_module_jd = LPJit::create_jit_dylib(gallivm->module_name);

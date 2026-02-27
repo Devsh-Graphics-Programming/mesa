@@ -485,8 +485,12 @@ lp_build_create_jit_compiler_for_module(LLVMExecutionEngineRef *OutJIT,
     * friends for configuring code generation options, like stack alignment.
     */
    TargetOptions options;
-#if DETECT_ARCH_X86 && LLVM_VERSION_MAJOR < 13
+#if LLVM_VERSION_MAJOR < 13
+#if DETECT_ARCH_X86
    options.StackAlignmentOverride = 4;
+#elif DETECT_ARCH_X86_64
+   options.StackAlignmentOverride = 32;
+#endif
 #endif
 
    builder.setEngineKind(EngineKind::JIT)

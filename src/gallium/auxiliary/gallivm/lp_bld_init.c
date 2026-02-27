@@ -237,6 +237,8 @@ init_gallivm_state(struct gallivm_state *gallivm, const char *name,
 
 #if DETECT_ARCH_X86
    lp_set_module_stack_alignment_override(gallivm->module, 4);
+#elif DETECT_ARCH_X86_64
+   lp_set_module_stack_alignment_override(gallivm->module, 32);
 #endif
 
    gallivm->builder = LLVMCreateBuilderInContext(gallivm->context);
