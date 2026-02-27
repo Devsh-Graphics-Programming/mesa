@@ -631,14 +631,23 @@ gallivm_create(const char *name, lp_context_ref *context,
 void
 gallivm_destroy(struct gallivm_state *gallivm)
 {
+#if LP_ORCJIT_WIN21_STABILITY_MODE
+   (void)gallivm;
+   return;
+#else
    LPJit::remove_jd(gallivm->_per_module_jd);
    gallivm->_per_module_jd = nullptr;
    FREE(gallivm);
+#endif
 }
 
 void
 gallivm_free_ir(struct gallivm_state *gallivm)
 {
+#if LP_ORCJIT_WIN21_STABILITY_MODE
+   (void)gallivm;
+   return;
+#else
    std::lock_guard<std::mutex> guard(LPJit::get_lookup_mutex());
 
    if (gallivm->module)
@@ -666,6 +675,7 @@ gallivm_free_ir(struct gallivm_state *gallivm)
    gallivm->_ts_context=NULL;
    gallivm->cache=NULL;
    LPJit::deregister_gallivm_state(gallivm);
+#endif
 }
 
 void
