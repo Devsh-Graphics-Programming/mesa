@@ -183,10 +183,17 @@ public:
       using llvm::orc::JITDylib;
       LPJit* jit = get_instance();
       std::lock_guard<std::mutex> guard(jit->lookup_mutex);
+#if LP_ORCJIT_WIN21_STABILITY_MODE
+      (void)name;
+      LLVMOrcJITDylibRef jd = wrap(&jit->lljit->getMainJITDylib());
+      jit->live_jd_handles.insert(jd);
+      return jd;
+#else
       JITDylib& tmp = ExitOnErr(jit->lljit->createJITDylib(name));
       LLVMOrcJITDylibRef jd = wrap(&tmp);
       jit->live_jd_handles.insert(jd);
       return jd;
+#endif
    }
 
    static void register_gallivm_state(gallivm_state *gallivm) {
