@@ -44,6 +44,7 @@
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/Casting.h>
+#include <llvm/Support/DynamicLibrary.h>
 #if LLVM_VERSION_MAJOR >= 18
 #include <llvm/TargetParser/Host.h>
 #else
@@ -249,6 +250,13 @@ public:
          debug_printf("ORCJIT skip addMapping for unknown JITDylib handle %p\n", jd);
          return;
       }
+#if LP_ORCJIT_WIN21_STABILITY_MODE
+      auto sym_name = llvm::unwrap(sym)->getName().str();
+      if (!sym_name.empty()) {
+         llvm::sys::DynamicLibrary::AddSymbol(sym_name, addr);
+      }
+      return;
+#endif
       auto& es = jit->lljit->getExecutionSession();
       auto name = es.intern(llvm::unwrap(sym)->getName());
       SymbolMap map(1);
